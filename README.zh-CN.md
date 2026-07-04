@@ -1,8 +1,8 @@
-# SprintRay 桌面扫描仪集成 — 模拟器
+# SprintRay 桌面扫描仪集成 — 示例应用
 
 [English](./README.md) | 中文
 
-一个**桌面应用侧**的参考实现与命令行**模拟器**,对应 SprintRay 的 device-login + 扫描文件上传集成。
+一个**桌面应用侧**的参考实现与命令行**示例应用**,对应 SprintRay 的 device-login + 扫描文件上传集成。
 用它理解整个流程,并在把逻辑接入你真实的桌面扫描仪应用之前完成端到端联调。
 
 零依赖 —— 仅使用 Node.js ≥ 18 内置能力。
@@ -17,6 +17,34 @@
    (见[启动 payload](#启动-payload))。
 3. **换取 token。** 通过 HTTPS 把 `code` + 你的客户端凭据 POST 上去,换取已登录医生的 `access_token`。
 4. **上传。** 对每个扫描文件,先申请预签名上传 URL,再把文件字节 PUT 上去。扫描文件会自动挂到 treatment 上。
+
+### 流程
+
+```mermaid
+sequenceDiagram
+    actor Doctor
+    participant Web as SprintRay Web App
+    participant App as Your Desktop App
+    participant BE as SprintRay Backend
+    participant S3 as S3 (presigned)
+
+    Doctor->>Web: 点击扫描
+    Web->>BE: 申请 device-login code
+    BE-->>Web: code + scanJobId + tokenEndpoint 路径
+    Web->>App: 打开自定义 URL scheme（内含 code，不含 token）
+    activate App
+    App->>App: base64 解码 payload，读取 code + tokenEndpoint
+    App->>BE: 用 code + 客户端凭据换取 token
+    BE-->>App: access_token + expires_in
+    loop 每个扫描文件（upper.stl, lower.stl）
+        App->>BE: 申请预签名上传 URL（携带文件元数据）
+        BE-->>App: 预签名上传 URL
+        App->>S3: PUT 原始文件字节
+        S3-->>App: 200 / 204
+    end
+    deactivate App
+    Note over Doctor,S3: 扫描文件挂载到 treatment
+```
 
 ### 启动 payload
 
@@ -50,7 +78,7 @@
 | `case.name` | 患者显示名 |
 | `case.ID` | 本次拉起的 scan-job 标识 |
 | `treatment.teeth[]` | 选中的牙位 —— `teeth`(牙号)、`notes`、`toothApplianceType`、`groupNumber` |
-| `fileType` | 请求的文件类型(`TreatmentScanType`),整口扫描时为 `null` |
+| `fileType` | 请求的文件类型(`TreatmentFiles`;见 [枚举](#枚举)),整口扫描时为 `null` |
 | `language` | 界面语言,如 `en_US` |
 | `serverType` | 服务器类型标识 |
 | `toothSystem` | 牙位编号系统:`fdi` 或 `utn` |
@@ -113,6 +141,160 @@ Content-Length: <fileSize>
 - `treatmentFileType`:**`1` = 上颌,`2` = 下颌**
 - 扫描文件为 **STL** 格式。
 
+## 枚举
+
+payload 与上传调用中用到的数值枚举。
+
+### `treatmentFileType` / `fileType` —— `TreatmentFiles`
+
+上传时作为 `treatmentFileType` 发送,在启动 payload 中作为 `fileType` 收到。口内扫描只需:
+
+| 值 | 名称 |
+|---|---|
+| `1` | UpperJaw(上颌) |
+| `2` | LowerJaw(下颌) |
+
+<details>
+<summary>全部 <code>TreatmentFiles</code> 取值</summary>
+
+| 值 | 名称 |
+|---|---|
+| 1 | UpperJaw |
+| 2 | LowerJaw |
+| 3 | LeftSide |
+| 4 | RightSide |
+| 5 | Other |
+| 6 | Spr |
+| 7 | SingleStl |
+| 8 | DesignPhoto |
+| 9 | CBCT |
+| 10 | SingleStlWithSupports |
+| 11 | BaseStl |
+| 12 | BaseSpr |
+| 13 | PonticStl |
+| 14 | PonticSpr |
+| 15 | PatientPhoto |
+| 16 | SurgicalGuideStl |
+| 17 | SurgicalGuideSpr |
+| 18 | CementedRestorationStl |
+| 19 | CementedRestorationSpr |
+| 20 | RemovableDieStl |
+| 21 | RemovableDieSpr |
+| 22 | CustomBleachingTrayStl |
+| 23 | CustomBleachingTraySpr |
+| 24 | WaxUpUpperStl |
+| 25 | TrialSmileUpperStl |
+| 26 | WaxUpSpr |
+| 27 | TrialSmileSpr |
+| 28 | DesignVideo |
+| 29 | MonolithicTryInDentureStl |
+| 30 | MonolithicTryInDentureSpr |
+| 31 | DentureGumBaseStl |
+| 32 | DentureGumBaseSpr |
+| 33 | DentureTeethStl |
+| 34 | DentureTeethSpr |
+| 35 | WaxUpLowerStl |
+| 36 | TrialSmileLowerStl |
+| 37 | CephXRayPhoto |
+| 38 | PanoXRayPhoto |
+| 39 | FrontFace |
+| 40 | FrontSmile |
+| 41 | RightSideFace |
+| 42 | LeftSideFace |
+| 43 | FrontTeeth |
+| 44 | RightSideTeeth |
+| 45 | LeftSideTeeth |
+| 46 | UpperJawImage |
+| 47 | LowerJawImage |
+| 48 | PreppedToothIntraoralScans |
+| 49 | DentureWaxSetup |
+| 50 | UpperTissueScan |
+| 51 | LowerTissueScan |
+| 52 | PhotogrammetryData |
+| 53 | MonolithicHybridDenturesStl |
+| 54 | MonolithicHybridDenturesSpr |
+| 55 | AICrownPreviewImage |
+| 56 | AICrownStl |
+| 57 | AICrownDieStl |
+| 58 | BiteScanCombo |
+| 59 | DentureUpperStl |
+| 60 | DentureLowerStl |
+| 61 | SmileDesignStl |
+| 63 | SmileDesignFrontSmile |
+| 64 | UpperJawRetainer |
+| 65 | LowerJawRetainer |
+| 66 | UpperJawAligner |
+| 67 | LowerJawAligner |
+| 68 | SprRetainer |
+| 69 | SprAligner |
+| 70 | UpperAppliance |
+| 71 | LowerAppliance |
+| 72 | UpperAntagonist |
+| 73 | LowerAntagonist |
+| 74 | VeneersDesignFrontSmile |
+| 75 | VeneersStl |
+| 76 | VeneersSpr |
+| 77 | PreppedUpperJaw |
+| 78 | PreppedLowerJaw |
+| 79 | DentalModelDieStl |
+| 80 | Link |
+| 81 | ImplantCrownStl |
+| 82 | ImplantShellTempStl |
+| 83 | ImplantBridgeStl |
+| 84 | UpperDirectPrintAppliance |
+| 85 | LowerDirectPrintAppliance |
+| 86 | UpperDirectPrintTemplate |
+| 87 | LowerDirectPrintTemplate |
+| 88 | SingleStlOnlyView |
+| 89 | UpperJawOnlyViewStl |
+| 90 | LowerJawOnlyViewStl |
+| 91 | TrackingLink |
+| 92 | PartialDentureBaseStl |
+| 93 | PartialDentureBaseSpr |
+| 94 | TreatmentTeethImage |
+| 95 | AISmilePreviewImage |
+| 96 | AISmilePreviewVideo |
+| 97 | PreOpUpperJaw |
+| 98 | PreOpLowerJaw |
+| 99 | CorrectedUpperJaw |
+| 100 | CorrectedLowerJaw |
+| 101 | Profile45Degree |
+| 102 | UpperScanbodyScan |
+| 103 | LowerScanbodyScan |
+
+`62` 未使用。
+
+</details>
+
+### `treatment.teeth[].toothApplianceType` —— `ToothApplianceType`
+
+| 值 | 名称 |
+|---|---|
+| 1 | PonticSites |
+| 2 | Clasps |
+| 3 | Crown |
+| 4 | SplintCrown |
+| 5 | Splint |
+| 6 | Inlay |
+| 7 | Onlay |
+| 8 | ShellTemp |
+| 9 | Wings |
+| 10 | Base |
+| 11 | Extraction |
+
+### `toothSystem`
+
+由医生的牙位编号偏好(`DentalNotation`)映射而来的字符串:
+
+| `toothSystem` | 含义 |
+|---|---|
+| `utn` | 通用牙位编号 Universal Tooth Numbering(`DentalNotation.Utn` = 1)—— 默认 |
+| `fdi` | FDI 世界牙科联盟编号(`DentalNotation.Fdi` = 2) |
+
+### `serverType`
+
+目前没有为其定义枚举,始终为固定值 `0`。
+
 ## 你需要向 SprintRay 索取的信息
 
 | 值 | 环境变量 | 说明 |
@@ -122,7 +304,7 @@ Content-Length: <fileSize>
 | Client Secret | `SCANPRO_CLIENT_SECRET` | 仅保存在服务端 / 你的应用内 |
 | URL scheme | `SCANPRO_URL_SCHEME` | 你的应用注册的 scheme,如 `openScanPro` |
 
-## 运行模拟器
+## 运行示例应用
 
 前置条件:Node.js ≥ 18(`--env-file` 需 ≥ 20.6)。支持 macOS / Windows / Linux(scheme 注册以 macOS 为已验证路径)。
 
@@ -132,7 +314,7 @@ cp .env.example .env      # 填入 origin、client id/secret、scheme
 
 ### 注册 URL scheme(真实的系统拉起)
 
-让操作系统把 `yourscheme://…` 路由到本模拟器,这样在浏览器里点击拉起入口即可真实启动它:
+让操作系统把 `yourscheme://…` 路由到本示例应用,这样在浏览器里点击拉起入口即可真实启动它:
 
 ```sh
 npm run register      # 向操作系统注册 scheme
