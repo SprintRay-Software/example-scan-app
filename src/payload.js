@@ -60,7 +60,6 @@ export function parseLaunchUrl(url) {
  * - externalCaseId       -> top-level external case id used on upload. `case.ID` is the
  *                           scan-job id, so we read the dedicated field and only fall back
  *                           to case.ID for older payloads that carried it there.
- * - supportedFileTypes   -> optional
  */
 export function extractFields(payload) {
   if (!payload || typeof payload !== 'object') {
@@ -83,8 +82,6 @@ export function extractFields(payload) {
 
   const treatmentId = payload.treatmentId ?? payload.TreatmentId ?? payload.treatmentID ?? null;
 
-  const supportedFileTypes = payload.supportedFileTypes ?? payload.SupportedFileTypes ?? null;
-
   if (!code) {
     throw new Error('launch payload missing auth.code');
   }
@@ -97,6 +94,5 @@ export function extractFields(payload) {
     tokenEndpoint,
     treatmentId,
     externalCaseId,
-    supportedFileTypes,
   };
 }

@@ -67,8 +67,7 @@ sequenceDiagram
     "expiresIn": 600
   },
   "treatmentId": "<treatment id>",
-  "externalCaseId": "<external case id>",
-  "supportedFileTypes": [1, 2]
+  "externalCaseId": "<external case id>"
 }
 ```
 
@@ -87,9 +86,8 @@ sequenceDiagram
 | `auth.expiresIn` | code 有效期(秒) |
 | `treatmentId` | 上传的扫描文件要挂载到的 treatment |
 | `externalCaseId` | 外部 case id(上传时作为 `externalCaseId` 传回) |
-| `supportedFileTypes` | 提供的牙弓 —— `1` = 上颌,`2` = 下颌 |
 
-> `auth`、`treatmentId`、`externalCaseId`、`supportedFileTypes` 是 SprintRay 的静默鉴权与上传上下文;
+> `auth`、`treatmentId`、`externalCaseId` 是 SprintRay 的静默鉴权与上传上下文;
 > 其余为标准 ScanPro 启动 payload。
 
 ## 接口约定

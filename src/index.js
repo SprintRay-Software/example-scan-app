@@ -141,7 +141,6 @@ async function main() {
   let code;
   let treatmentId;
   let externalCaseId;
-  let supportedFileTypes = null;
 
   if (hasFormA) {
     step('Form A: parsing launch URL');
@@ -153,12 +152,10 @@ async function main() {
     tokenPath = fields.tokenEndpoint;
     treatmentId = fields.treatmentId;
     externalCaseId = fields.externalCaseId;
-    supportedFileTypes = fields.supportedFileTypes;
     info(`code=${code}`);
     info(`tokenEndpoint (path)=${tokenPath}`);
     info(`treatmentId=${treatmentId}`);
     info(`externalCaseId=${externalCaseId}`);
-    if (supportedFileTypes) info(`supportedFileTypes=${JSON.stringify(supportedFileTypes)}`);
   } else {
     step('Form B: using explicit flags');
     code = args.code;

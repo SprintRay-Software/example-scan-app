@@ -58,7 +58,6 @@ function sampleLaunchUrl(scheme) {
     case: { ID: zeroGuid },
     auth: { code: 'SMOKETEST-INVALID', tokenEndpoint: '/api/integration/device-login-token', expiresIn: 600 },
     treatmentId: zeroGuid,
-    supportedFileTypes: [1, 2],
   };
   return `${scheme}://${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')}`;
 }

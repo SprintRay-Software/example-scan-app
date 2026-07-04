@@ -72,8 +72,7 @@ sequenceDiagram
     "expiresIn": 600
   },
   "treatmentId": "<treatment id>",
-  "externalCaseId": "<external case id>",
-  "supportedFileTypes": [1, 2]
+  "externalCaseId": "<external case id>"
 }
 ```
 
@@ -92,9 +91,8 @@ sequenceDiagram
 | `auth.expiresIn` | code lifetime, seconds |
 | `treatmentId` | treatment the uploaded scans attach to |
 | `externalCaseId` | external case id (send back as `externalCaseId` on upload) |
-| `supportedFileTypes` | jaws offered — `1` = upper, `2` = lower |
 
-> The `auth`, `treatmentId`, `externalCaseId` and `supportedFileTypes` fields are the SprintRay
+> The `auth`, `treatmentId` and `externalCaseId` fields are the SprintRay
 > silent-auth + upload context; the rest is the standard ScanPro launch payload.
 
 ## API contract
