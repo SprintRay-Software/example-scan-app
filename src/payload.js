@@ -10,6 +10,12 @@ export const TreatmentFileType = {
   LowerJaw: 2,
 };
 
+// Human-readable name for a TreatmentFiles value, for logging (e.g. 1 -> "UpperJaw").
+export function fileTypeName(value) {
+  const name = Object.keys(TreatmentFileType).find((k) => TreatmentFileType[k] === Number(value));
+  return name ?? 'unknown';
+}
+
 /**
  * Decode + parse a `<scheme>://<base64_json>` launch URL into its JSON payload object.
  * Accepts the URL with or without a scheme prefix (any scheme, not just openScanPro).
@@ -60,6 +66,8 @@ export function parseLaunchUrl(url) {
  * - externalCaseId       -> top-level external case id used on upload. `case.ID` is the
  *                           scan-job id, so we read the dedicated field and only fall back
  *                           to case.ID for older payloads that carried it there.
+ * - fileType             -> requested TreatmentFiles type for the upload body; null for a
+ *                           full (both-jaw) scan, in which case the per-file default is used.
  */
 export function extractFields(payload) {
   if (!payload || typeof payload !== 'object') {
@@ -82,6 +90,9 @@ export function extractFields(payload) {
 
   const treatmentId = payload.treatmentId ?? payload.TreatmentId ?? payload.treatmentID ?? null;
 
+  const rawFileType = payload.fileType ?? payload.FileType ?? null;
+  const fileType = rawFileType === null || rawFileType === undefined ? null : Number(rawFileType);
+
   if (!code) {
     throw new Error('launch payload missing auth.code');
   }
@@ -94,5 +105,6 @@ export function extractFields(payload) {
     tokenEndpoint,
     treatmentId,
     externalCaseId,
+    fileType,
   };
 }

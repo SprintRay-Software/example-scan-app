@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { step, ok, info } from './log.js';
 import { createProgress } from './progress.js';
 import { logRequest, logResponse } from './http.js';
+import { fileTypeName } from './payload.js';
 
 function joinUrl(baseUrl, path) {
   const b = String(baseUrl).replace(/\/+$/, '');
@@ -38,6 +39,7 @@ export async function getUploadLink({
   fileSize,
   treatmentId,
   treatmentFileType,
+  fileTypeSource = 'fixture default',
   externalCaseId,
 }) {
   const url = joinUrl(baseUrl, 'api/file/upload');
@@ -48,6 +50,11 @@ export async function getUploadLink({
   };
   const model = { fileName, fileSize, treatmentId, treatmentFileType, externalCaseId };
 
+  // Highlight which FileType is being sent in the upload body and where it came from.
+  step(
+    `>> Upload FileType for ${fileName}: ${treatmentFileType} (${fileTypeName(treatmentFileType)}) ` +
+      `— source: ${fileTypeSource}`
+  );
   step(`Requesting presigned upload URL for ${fileName} (treatmentFileType=${treatmentFileType})`);
   logRequest({ label: `file/upload (${fileName})`, method: 'POST', url, headers, body: model });
 
@@ -136,6 +143,7 @@ export async function uploadFixture({
   fileName,
   treatmentId,
   treatmentFileType,
+  fileTypeSource = 'fixture default',
   externalCaseId,
 }) {
   const bytes = await readFile(filePath);
@@ -148,6 +156,7 @@ export async function uploadFixture({
     fileSize: bytes.length,
     treatmentId,
     treatmentFileType,
+    fileTypeSource,
     externalCaseId,
   });
 
@@ -155,5 +164,5 @@ export async function uploadFixture({
   await putFile(presignedUrl, bytes, (s, t) => progress.update(s, t));
   progress.done();
 
-  return { fileName, treatmentFileType, fileSize: bytes.length };
+  return { fileName, treatmentFileType, fileTypeSource, fileSize: bytes.length };
 }

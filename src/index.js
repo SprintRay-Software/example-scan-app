@@ -21,7 +21,7 @@ import { dirname, resolve } from 'node:path';
 
 import { loadConfig, normalizeBaseUrl } from './config.js';
 import { step, ok, fail, info } from './log.js';
-import { parseLaunchUrl, extractFields, TreatmentFileType } from './payload.js';
+import { parseLaunchUrl, extractFields, TreatmentFileType, fileTypeName } from './payload.js';
 import { exchangeCodeForTokens, refreshTokens } from './auth.js';
 import { uploadFixture } from './upload.js';
 import { SCHEME_COMMANDS, runSchemeCommand } from './scheme-cli.js';
@@ -141,6 +141,8 @@ async function main() {
   let code;
   let treatmentId;
   let externalCaseId;
+  // Requested TreatmentFiles type from the launch payload; null = full scan (use per-file default).
+  let payloadFileType = null;
 
   if (hasFormA) {
     step('Form A: parsing launch URL');
@@ -152,10 +154,16 @@ async function main() {
     tokenPath = fields.tokenEndpoint;
     treatmentId = fields.treatmentId;
     externalCaseId = fields.externalCaseId;
+    payloadFileType = fields.fileType;
     info(`code=${code}`);
     info(`tokenEndpoint (path)=${tokenPath}`);
     info(`treatmentId=${treatmentId}`);
     info(`externalCaseId=${externalCaseId}`);
+    info(
+      payloadFileType === null
+        ? 'launch payload fileType = null (full scan; per-file default will be used)'
+        : `launch payload fileType = ${payloadFileType} (${fileTypeName(payloadFileType)})`
+    );
   } else {
     step('Form B: using explicit flags');
     code = args.code;
@@ -204,6 +212,10 @@ async function main() {
   const failures = [];
 
   for (const item of plan) {
+    // Prefer the fileType parsed from the launch payload; fall back to the per-file default.
+    const usePayloadFileType = payloadFileType !== null && payloadFileType !== undefined;
+    const treatmentFileType = usePayloadFileType ? payloadFileType : item.treatmentFileType;
+    const fileTypeSource = usePayloadFileType ? 'launch payload' : 'fixture default';
     try {
       const r = await uploadFixture({
         baseUrl,
@@ -211,7 +223,8 @@ async function main() {
         filePath: item.filePath,
         fileName: item.fileName,
         treatmentId,
-        treatmentFileType: item.treatmentFileType,
+        treatmentFileType,
+        fileTypeSource,
         externalCaseId,
       });
       results.push(r);
@@ -225,7 +238,10 @@ async function main() {
   console.log('\n──────── summary ────────');
   info(`uploaded: ${results.length}/${plan.length}`);
   for (const r of results) {
-    ok(`${r.fileName} (treatmentFileType=${r.treatmentFileType}, ${r.fileSize} bytes)`);
+    ok(
+      `${r.fileName} — FileType ${r.treatmentFileType} (${fileTypeName(r.treatmentFileType)}) ` +
+        `from ${r.fileTypeSource}, ${r.fileSize} bytes`
+    );
   }
   for (const f of failures) {
     fail(`${f.fileName}: ${f.error}`);

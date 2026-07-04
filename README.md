@@ -143,7 +143,9 @@ Content-Length: <fileSize>
 
 `200`/`204` on success. **No** auth header on the PUT — the presigned URL is self-authorizing.
 
-- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**
+- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. The simulator uses the launch
+  payload's `fileType` when present, and otherwise falls back to the per-file default
+  (upper.stl → `1`, lower.stl → `2`). The chosen value and its source are logged for each upload.
 - Scan files are **STL**.
 
 ## Enums

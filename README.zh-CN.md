@@ -136,7 +136,9 @@ Content-Length: <fileSize>
 
 成功返回 `200`/`204`。PUT 请求**不带**鉴权头 —— 预签名 URL 自带授权。
 
-- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**
+- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。示例应用优先使用启动 payload 中的 `fileType`,
+  没有时回退到各文件的默认值(upper.stl → `1`,lower.stl → `2`)。每次上传都会在日志中打印所用的
+  取值及其来源。
 - 扫描文件为 **STL** 格式。
 
 ## 枚举
