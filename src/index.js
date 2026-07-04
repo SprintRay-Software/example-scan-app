@@ -146,6 +146,7 @@ async function main() {
   if (hasFormA) {
     step('Form A: parsing launch URL');
     const payload = parseLaunchUrl(args.launchUrl);
+    info('decoded launch payload (base64 JSON):\n' + JSON.stringify(payload, null, 2));
     const fields = extractFields(payload);
     code = fields.code;
     // tokenEndpoint from the payload is a PATH; effective endpoint = BASE_URL + path.

@@ -22,31 +22,57 @@
 
 ```json
 {
-  "caller": { "name": "SprintRay", "version": "1.0.0" },
-  "case": { "ID": "<external-case-id>" },
+  "caller": { "name": "SprintRay", "version": "1.0.10.0" },
+  "case": { "name": "<患者姓名>", "ID": "<scan-job id>" },
+  "treatment": {
+    "teeth": [
+      { "teeth": 3, "notes": "", "toothApplianceType": 3, "groupNumber": null }
+    ]
+  },
+  "fileType": null,
+  "language": "en_US",
+  "serverType": 0,
+  "toothSystem": "fdi",
   "auth": {
     "code": "<one-time-code>",
     "tokenEndpoint": "/api/integration/device-login-token",
     "expiresIn": 600
   },
-  "treatmentId": "<treatment-id>",
+  "treatmentId": "<treatment id>",
+  "externalCaseId": "<external case id>",
   "supportedFileTypes": [1, 2]
 }
 ```
 
 | 字段 | 用途 |
 |---|---|
+| `caller` | 拉起方(`SprintRay` + Web 端版本) |
+| `case.name` | 患者显示名 |
+| `case.ID` | 本次拉起的 scan-job 标识 |
+| `treatment.teeth[]` | 选中的牙位 —— `teeth`(牙号)、`notes`、`toothApplianceType`、`groupNumber` |
+| `fileType` | 请求的文件类型(`TreatmentScanType`),整口扫描时为 `null` |
+| `language` | 界面语言,如 `en_US` |
+| `serverType` | 服务器类型标识 |
+| `toothSystem` | 牙位编号系统:`fdi` 或 `utn` |
 | `auth.code` | 用于换取 token 的一次性 device-login code |
 | `auth.tokenEndpoint` | token 接口**路径** —— 拼接到后端 origin 之后 |
 | `auth.expiresIn` | code 有效期(秒) |
-| `treatmentId` | 扫描文件要挂载到的 treatment |
-| `case.ID` | 外部 case id(上传时作为 `externalCaseId` 传回) |
-| `supportedFileTypes` | 需上传的牙弓 —— `1` = 上颌,`2` = 下颌 |
+| `treatmentId` | 上传的扫描文件要挂载到的 treatment |
+| `externalCaseId` | 外部 case id(上传时作为 `externalCaseId` 传回) |
+| `supportedFileTypes` | 提供的牙弓 —— `1` = 上颌,`2` = 下颌 |
+
+> `auth`、`treatmentId`、`externalCaseId`、`supportedFileTypes` 是 SprintRay 的静默鉴权与上传上下文;
+> 其余为标准 ScanPro 启动 payload。
 
 ## 接口约定
 
-共两个调用。`{ORIGIN}` 为 SprintRay 后端 origin(如 `https://dashboard.sprintray.com`)
-—— 不带 `/api` 后缀,路径本身已包含 `/api`。
+共两个调用。`{ORIGIN}` 为对应环境下固定的 SprintRay 后端 origin(不带 `/api` 后缀,路径本身已含 `/api`):
+
+| 环境 | `{ORIGIN}` |
+|---|---|
+| dev | `https://dashboard.sprintray.com` |
+| staging | `https://dashboard.sprintray.com` |
+| prod | `https://dashboard.sprintray.com` |
 
 ### 1. 用 code 换取 token
 
@@ -91,7 +117,7 @@ Content-Length: <fileSize>
 
 | 值 | 环境变量 | 说明 |
 |---|---|---|
-| 后端 origin | `SCANPRO_BASE_URL` | 不带 `/api` 后缀 |
+| 后端 origin | `SCANPRO_BASE_URL` | 按环境固定(dev / staging / prod,见上表);不带 `/api` 后缀 |
 | Client ID | `SCANPRO_CLIENT_ID` | 你集成的公开 id |
 | Client Secret | `SCANPRO_CLIENT_SECRET` | 仅保存在服务端 / 你的应用内 |
 | URL scheme | `SCANPRO_URL_SCHEME` | 你的应用注册的 scheme,如 `openScanPro` |

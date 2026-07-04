@@ -27,31 +27,58 @@ token ever travels in the launch URL**:
 
 ```json
 {
-  "caller": { "name": "SprintRay", "version": "1.0.0" },
-  "case": { "ID": "<external-case-id>" },
+  "caller": { "name": "SprintRay", "version": "1.0.10.0" },
+  "case": { "name": "<patient name>", "ID": "<scan-job id>" },
+  "treatment": {
+    "teeth": [
+      { "teeth": 3, "notes": "", "toothApplianceType": 3, "groupNumber": null }
+    ]
+  },
+  "fileType": null,
+  "language": "en_US",
+  "serverType": 0,
+  "toothSystem": "fdi",
   "auth": {
     "code": "<one-time-code>",
     "tokenEndpoint": "/api/integration/device-login-token",
     "expiresIn": 600
   },
-  "treatmentId": "<treatment-id>",
+  "treatmentId": "<treatment id>",
+  "externalCaseId": "<external case id>",
   "supportedFileTypes": [1, 2]
 }
 ```
 
 | Field | Use |
 |---|---|
+| `caller` | who launched the app (`SprintRay` + web app version) |
+| `case.name` | patient display name |
+| `case.ID` | scan-job identifier for this launch |
+| `treatment.teeth[]` | selected teeth — `teeth` (tooth number), `notes`, `toothApplianceType`, `groupNumber` |
+| `fileType` | requested file type (`TreatmentScanType`), or `null` for a full scan |
+| `language` | UI locale, e.g. `en_US` |
+| `serverType` | server type indicator |
+| `toothSystem` | tooth numbering: `fdi` or `utn` |
 | `auth.code` | one-time device-login code to exchange |
 | `auth.tokenEndpoint` | token endpoint **path** — join onto the backend origin |
 | `auth.expiresIn` | code lifetime, seconds |
-| `treatmentId` | treatment the scans attach to |
-| `case.ID` | external case id (send as `externalCaseId` on upload) |
-| `supportedFileTypes` | jaws to upload — `1` = upper, `2` = lower |
+| `treatmentId` | treatment the uploaded scans attach to |
+| `externalCaseId` | external case id (send back as `externalCaseId` on upload) |
+| `supportedFileTypes` | jaws offered — `1` = upper, `2` = lower |
+
+> The `auth`, `treatmentId`, `externalCaseId` and `supportedFileTypes` fields are the SprintRay
+> silent-auth + upload context; the rest is the standard ScanPro launch payload.
 
 ## API contract
 
-Two calls. `{ORIGIN}` is the SprintRay backend origin (e.g. `https://dashboard.sprintray.com`)
-— no `/api` suffix; the paths already include it.
+Two calls. `{ORIGIN}` is the fixed SprintRay backend origin for your environment (no `/api`
+suffix; the paths already include it):
+
+| Environment | `{ORIGIN}` |
+|---|---|
+| dev | `https://dashboard.sprintray.com` |
+| staging | `https://dashboard.sprintray.com` |
+| prod | `https://dashboard.sprintray.com` |
 
 ### 1. Exchange the code for a token
 
@@ -97,7 +124,7 @@ Content-Length: <fileSize>
 
 | Value | Env var | Notes |
 |---|---|---|
-| Backend origin | `SCANPRO_BASE_URL` | no `/api` suffix |
+| Backend origin | `SCANPRO_BASE_URL` | fixed per environment (dev / staging / prod — see above); no `/api` suffix |
 | Client id | `SCANPRO_CLIENT_ID` | your integration's public id |
 | Client secret | `SCANPRO_CLIENT_SECRET` | keep server-side / in your app only |
 | URL scheme | `SCANPRO_URL_SCHEME` | the scheme your app registers, e.g. `openScanPro` |

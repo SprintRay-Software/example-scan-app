@@ -56,9 +56,11 @@ export function parseLaunchUrl(url) {
  * Pull the fields the simulator uses out of a parsed launch payload.
  * - auth.code            -> device-login code to exchange
  * - auth.tokenEndpoint   -> PATH (not full URL) of the token endpoint
- * - treatmentId          -> preferred; falls back to case.ID
- * - case.ID              -> externalCaseId (and treatmentId fallback)
- * - supportedFileTypes   -> optional array driving which jaws to upload
+ * - treatmentId          -> top-level treatment id (the upload target)
+ * - externalCaseId       -> top-level external case id used on upload. `case.ID` is the
+ *                           scan-job id, so we read the dedicated field and only fall back
+ *                           to case.ID for older payloads that carried it there.
+ * - supportedFileTypes   -> optional
  */
 export function extractFields(payload) {
   if (!payload || typeof payload !== 'object') {
@@ -70,14 +72,18 @@ export function extractFields(payload) {
 
   const code = auth.code ?? auth.Code;
   const tokenEndpoint = auth.tokenEndpoint ?? auth.TokenEndpoint;
-  const caseId = caseObj.ID ?? caseObj.Id ?? caseObj.id;
 
-  // Prefer the top-level treatmentId, fall back to case.ID.
-  const treatmentId =
-    payload.treatmentId ?? payload.TreatmentId ?? payload.treatmentID ?? caseId;
+  const externalCaseId =
+    payload.externalCaseId ??
+    payload.ExternalCaseId ??
+    caseObj.ID ??
+    caseObj.Id ??
+    caseObj.id ??
+    null;
 
-  const supportedFileTypes =
-    payload.supportedFileTypes ?? payload.SupportedFileTypes ?? null;
+  const treatmentId = payload.treatmentId ?? payload.TreatmentId ?? payload.treatmentID ?? null;
+
+  const supportedFileTypes = payload.supportedFileTypes ?? payload.SupportedFileTypes ?? null;
 
   if (!code) {
     throw new Error('launch payload missing auth.code');
@@ -90,7 +96,7 @@ export function extractFields(payload) {
     code,
     tokenEndpoint,
     treatmentId,
-    externalCaseId: caseId,
+    externalCaseId,
     supportedFileTypes,
   };
 }
