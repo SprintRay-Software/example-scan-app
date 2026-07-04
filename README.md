@@ -20,8 +20,9 @@ token ever travels in the launch URL**:
    treatment/case identifiers (see [Launch payload](#launch-payload)).
 3. **Exchange.** POST the `code` + your client credentials over HTTPS to obtain the signed-in
    doctor's `access_token`.
-4. **Upload.** For each scan file, request a presigned upload URL, then PUT the file bytes to it.
-   The scans attach to the treatment automatically.
+4. **Upload.** Request a presigned upload URL for the requested scan (the launch payload's
+   `fileType` — one file per launch), then PUT the file bytes to it. The scan attaches to the
+   treatment automatically.
 
 ### Flow
 
@@ -41,12 +42,10 @@ sequenceDiagram
     App->>App: base64-decode payload, read code + tokenEndpoint
     App->>BE: exchange code + client credentials for a token
     BE-->>App: access_token + expires_in
-    loop each scan file (upper.stl, lower.stl)
-        App->>BE: request presigned upload URL (with file metadata)
-        BE-->>App: presigned upload URL
-        App->>S3: PUT raw file bytes
-        S3-->>App: 200 / 204
-    end
+    App->>BE: request presigned upload URL for the requested scan (upper or lower)
+    BE-->>App: presigned upload URL
+    App->>S3: PUT raw file bytes
+    S3-->>App: 200 / 204
     deactivate App
     Note over Doctor,S3: scans are attached to the treatment
 ```
@@ -143,9 +142,9 @@ Content-Length: <fileSize>
 
 `200`/`204` on success. **No** auth header on the PUT — the presigned URL is self-authorizing.
 
-- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. The simulator uses the launch
-  payload's `fileType` when present, and otherwise falls back to the per-file default
-  (upper.stl → `1`, lower.stl → `2`). The chosen value and its source are logged for each upload.
+- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. The example app uploads **one file
+  per launch**, chosen by the launch payload's `fileType`: `2` → `lower.stl`, anything else
+  (or no `fileType`) → `upper.stl`. The value and its source are logged for the upload.
 - Scan files are **STL**.
 
 ## Enums
@@ -351,10 +350,11 @@ Add `--demo-refresh` to also exercise the token-refresh endpoint.
 
 ### What it does
 
-Each run exchanges the code, then uploads `fixtures/upper.stl` and `fixtures/lower.stl` with a live
-progress bar. **Every backend request and response is logged in full** (method, URL, headers, body /
-status, headers, body) so you can see exactly what to send and what to expect. Swap the two files in
-`fixtures/` to upload your own scans.
+Each run exchanges the code, then uploads a single scan — `fixtures/lower.stl` when the launch
+payload's `fileType` is `2` (lower jaw), otherwise `fixtures/upper.stl` — with a live progress bar.
+**Every backend request and response is logged in full** (method, URL, headers, body / status,
+headers, body) so you can see exactly what to send and what to expect. Swap the files in `fixtures/`
+to upload your own scans.
 
 ## Exit codes
 
@@ -367,8 +367,6 @@ Files a doctor uploads when **submitting** a treatment, exported from DS product
 (`TreatmentType` ⨝ `TreatmentTypeFile`, `FileKind = 0` = `Original`). Active files only; the
 `Not Selected` placeholder and all `Studio *` types are omitted. `Type` is the `TreatmentFiles`
 enum (value + name); a blank `MaxMB` means no explicit size cap.
-
-_Snapshot from DS production on 2026-07-04 — 132 files across 26 treatment types._
 
 | TreatmentType | Title | Type (TreatmentFiles) | Required | Accept | MaxMB |
 |---|---|---|---|---|---|

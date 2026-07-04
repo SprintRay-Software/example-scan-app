@@ -201,42 +201,41 @@ async function main() {
     tokens = refreshed;
   }
 
-  // 2) Upload the two example scans (upper + lower jaw) with live progress.
-  step('Uploading example scans: upper.stl, lower.stl');
-  const plan = [
-    { fileName: 'upper.stl', filePath: resolve(FIXTURES_DIR, 'upper.stl'), treatmentFileType: TreatmentFileType.UpperJaw },
-    { fileName: 'lower.stl', filePath: resolve(FIXTURES_DIR, 'lower.stl'), treatmentFileType: TreatmentFileType.LowerJaw },
-  ];
+  // 2) Upload exactly one scan, chosen by the requested fileType (upper vs lower).
+  const hasType = payloadFileType !== null && payloadFileType !== undefined;
+  const treatmentFileType = hasType ? Number(payloadFileType) : TreatmentFileType.UpperJaw;
+  const fileTypeSource = hasType ? 'launch payload' : 'default (no fileType in payload)';
+  const isLower = treatmentFileType === TreatmentFileType.LowerJaw;
+  const fileName = isLower ? 'lower.stl' : 'upper.stl';
+
+  step(
+    `Uploading one scan for FileType ${treatmentFileType} (${fileTypeName(treatmentFileType)}) ` +
+      `from ${fileTypeSource}: ${fileName}`
+  );
 
   const results = [];
   const failures = [];
 
-  for (const item of plan) {
-    // Prefer the fileType parsed from the launch payload; fall back to the per-file default.
-    const usePayloadFileType = payloadFileType !== null && payloadFileType !== undefined;
-    const treatmentFileType = usePayloadFileType ? payloadFileType : item.treatmentFileType;
-    const fileTypeSource = usePayloadFileType ? 'launch payload' : 'fixture default';
-    try {
-      const r = await uploadFixture({
-        baseUrl,
-        accessToken: tokens.access_token,
-        filePath: item.filePath,
-        fileName: item.fileName,
-        treatmentId,
-        treatmentFileType,
-        fileTypeSource,
-        externalCaseId,
-      });
-      results.push(r);
-    } catch (err) {
-      fail(`Upload failed for ${item.fileName}: ${err.message}`);
-      failures.push({ fileName: item.fileName, error: err.message });
-    }
+  try {
+    const r = await uploadFixture({
+      baseUrl,
+      accessToken: tokens.access_token,
+      filePath: resolve(FIXTURES_DIR, fileName),
+      fileName,
+      treatmentId,
+      treatmentFileType,
+      fileTypeSource,
+      externalCaseId,
+    });
+    results.push(r);
+  } catch (err) {
+    fail(`Upload failed for ${fileName}: ${err.message}`);
+    failures.push({ fileName, error: err.message });
   }
 
   // 3) Final summary.
   console.log('\n──────── summary ────────');
-  info(`uploaded: ${results.length}/${plan.length}`);
+  info(`uploaded: ${results.length}/1`);
   for (const r of results) {
     ok(
       `${r.fileName} — FileType ${r.treatmentFileType} (${fileTypeName(r.treatmentFileType)}) ` +

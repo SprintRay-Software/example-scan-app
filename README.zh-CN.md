@@ -16,7 +16,7 @@
 2. **解码。** 对 payload 做 base64 解码,读取 `code`、token 接口路径,以及 treatment / case 标识
    (见[启动 payload](#启动-payload))。
 3. **换取 token。** 通过 HTTPS 把 `code` + 你的客户端凭据 POST 上去,换取已登录医生的 `access_token`。
-4. **上传。** 对每个扫描文件,先申请预签名上传 URL,再把文件字节 PUT 上去。扫描文件会自动挂到 treatment 上。
+4. **上传。** 为本次请求的扫描文件(启动 payload 中的 `fileType` —— 每次拉起只传一个文件)申请预签名上传 URL,再把文件字节 PUT 上去。扫描文件会自动挂到 treatment 上。
 
 ### 流程
 
@@ -36,12 +36,10 @@ sequenceDiagram
     App->>App: base64 解码 payload，读取 code + tokenEndpoint
     App->>BE: 用 code + 客户端凭据换取 token
     BE-->>App: access_token + expires_in
-    loop 每个扫描文件（upper.stl, lower.stl）
-        App->>BE: 申请预签名上传 URL（携带文件元数据）
-        BE-->>App: 预签名上传 URL
-        App->>S3: PUT 原始文件字节
-        S3-->>App: 200 / 204
-    end
+    App->>BE: 为请求的扫描文件（上颌或下颌）申请预签名上传 URL
+    BE-->>App: 预签名上传 URL
+    App->>S3: PUT 原始文件字节
+    S3-->>App: 200 / 204
     deactivate App
     Note over Doctor,S3: 扫描文件挂载到 treatment
 ```
@@ -136,9 +134,8 @@ Content-Length: <fileSize>
 
 成功返回 `200`/`204`。PUT 请求**不带**鉴权头 —— 预签名 URL 自带授权。
 
-- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。示例应用优先使用启动 payload 中的 `fileType`,
-  没有时回退到各文件的默认值(upper.stl → `1`,lower.stl → `2`)。每次上传都会在日志中打印所用的
-  取值及其来源。
+- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。示例应用**每次拉起只上传一个文件**,由启动 payload 中的
+  `fileType` 决定:`2` → `lower.stl`,其它(或未提供 `fileType`)→ `upper.stl`。日志中会打印所用的取值及其来源。
 - 扫描文件为 **STL** 格式。
 
 ## 枚举
@@ -340,9 +337,10 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 
 ### 它做了什么
 
-每次运行会:换取 token,然后上传 `fixtures/upper.stl` 与 `fixtures/lower.stl`,并展示实时进度条。
+每次运行会:换取 token,然后上传**单个**扫描文件 —— 当启动 payload 的 `fileType` 为 `2`(下颌)时上传
+`fixtures/lower.stl`,否则上传 `fixtures/upper.stl` —— 并展示实时进度条。
 **每个后端请求与响应都会被完整打印**(方法、URL、请求头、请求体 / 状态码、响应头、响应体),
-让你清楚地看到该发送什么、该期望什么。把 `fixtures/` 里的两个文件替换成你自己的扫描件即可测试其它数据。
+让你清楚地看到该发送什么、该期望什么。把 `fixtures/` 里的文件替换成你自己的扫描件即可测试其它数据。
 
 ## 退出码
 
@@ -352,8 +350,6 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 ## 各 TreatmentType 的提交上传文件
 
 医生**提交** treatment 时需要上传的文件，导出自 DS 生产库（`TreatmentType` ⨝ `TreatmentTypeFile`，`FileKind = 0` = `Original`）。仅含启用（active）的文件；已排除 `Not Selected` 占位类型与所有 `Studio *` 类型。`Type` 为 `TreatmentFiles` 枚举（值 + 名称）；`上限 MB` 为空表示无显式上限。
-
-_数据快照：DS 生产库 2026-07-04 —— 26 个 treatment type，共 132 个文件。_
 
 | 治疗类型 (TreatmentType) | 标题 (Title) | 类型 (TreatmentFiles) | 必填 | 允许格式 (Accept) | 上限 MB |
 |---|---|---|---|---|---|
