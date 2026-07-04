@@ -1,0 +1,96 @@
+// Parses the `openScanPro://<base64_json>` launch URL that the browser hands to the
+// desktop app after device login, and extracts the fields the simulator needs.
+
+// Matches any custom URL scheme prefix, e.g. `openScanPro://` or a custom `--scheme`.
+const SCHEME_PREFIX = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
+
+// TreatmentFiles enum (int) — matches the backend enum.
+export const TreatmentFileType = {
+  UpperJaw: 1,
+  LowerJaw: 2,
+};
+
+/**
+ * Decode + parse a `<scheme>://<base64_json>` launch URL into its JSON payload object.
+ * Accepts the URL with or without a scheme prefix (any scheme, not just openScanPro).
+ */
+export function parseLaunchUrl(url) {
+  if (typeof url !== 'string' || url.trim() === '') {
+    throw new Error('launch URL is empty');
+  }
+
+  let encoded = url.trim();
+  // Strip whatever custom scheme prefix is present (registration allows a custom --scheme).
+  encoded = encoded.replace(SCHEME_PREFIX, '');
+
+  // A custom-scheme URL may arrive percent-encoded from the OS handler.
+  try {
+    encoded = decodeURIComponent(encoded);
+  } catch {
+    // Not percent-encoded; use as-is.
+  }
+
+  encoded = encoded.trim();
+  if (encoded === '') {
+    throw new Error('launch URL has no payload after the scheme');
+  }
+
+  let json;
+  try {
+    json = Buffer.from(encoded, 'base64').toString('utf8');
+  } catch (err) {
+    throw new Error(`failed to base64-decode launch payload: ${err.message}`);
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(json);
+  } catch (err) {
+    throw new Error(`launch payload is not valid JSON: ${err.message}`);
+  }
+
+  return payload;
+}
+
+/**
+ * Pull the fields the simulator uses out of a parsed launch payload.
+ * - auth.code            -> device-login code to exchange
+ * - auth.tokenEndpoint   -> PATH (not full URL) of the token endpoint
+ * - treatmentId          -> preferred; falls back to case.ID
+ * - case.ID              -> externalCaseId (and treatmentId fallback)
+ * - supportedFileTypes   -> optional array driving which jaws to upload
+ */
+export function extractFields(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('launch payload did not decode to an object');
+  }
+
+  const auth = payload.auth || {};
+  const caseObj = payload.case || payload.Case || {};
+
+  const code = auth.code ?? auth.Code;
+  const tokenEndpoint = auth.tokenEndpoint ?? auth.TokenEndpoint;
+  const caseId = caseObj.ID ?? caseObj.Id ?? caseObj.id;
+
+  // Prefer the top-level treatmentId, fall back to case.ID.
+  const treatmentId =
+    payload.treatmentId ?? payload.TreatmentId ?? payload.treatmentID ?? caseId;
+
+  const supportedFileTypes =
+    payload.supportedFileTypes ?? payload.SupportedFileTypes ?? null;
+
+  if (!code) {
+    throw new Error('launch payload missing auth.code');
+  }
+  if (!tokenEndpoint) {
+    throw new Error('launch payload missing auth.tokenEndpoint');
+  }
+
+  return {
+    code,
+    tokenEndpoint,
+    treatmentId,
+    externalCaseId: caseId,
+    supportedFileTypes,
+  };
+}

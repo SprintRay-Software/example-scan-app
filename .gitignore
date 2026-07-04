@@ -1,0 +1,5 @@
+# Local dev env (contains client secret)
+.env
+
+# OS junk
+.DS_Store
