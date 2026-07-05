@@ -1,17 +1,10 @@
 // Scan-file upload flow: get a presigned S3 URL from the backend, then PUT the bytes to S3.
-// Uses global fetch + fs (Node >=18). No dependencies.
+// Every call is fully reported (request + response) via the injected reporter. Uses global
+// fetch + fs (Node/Electron >= 18). No dependencies.
 
 import { readFile } from 'node:fs/promises';
-import { step, ok, info } from './log.js';
-import { createProgress } from './progress.js';
-import { logRequest, logResponse } from './http.js';
+import { httpJson, httpPutStream, joinUrl } from './core/net.js';
 import { fileTypeName } from './payload.js';
-
-function joinUrl(baseUrl, path) {
-  const b = String(baseUrl).replace(/\/+$/, '');
-  const p = String(path).replace(/^\/+/, '');
-  return `${b}/${p}`;
-}
 
 /**
  * The /file/upload response may be:
@@ -32,16 +25,10 @@ function extractPresignedUrl(parsed) {
  * POST {baseUrl}/api/file/upload  Authorization: Bearer <accessToken>
  * Body is an ExternalProviderFileInputModel-like shape.
  */
-export async function getUploadLink({
-  baseUrl,
-  accessToken,
-  fileName,
-  fileSize,
-  treatmentId,
-  treatmentFileType,
-  fileTypeSource = 'fixture default',
-  externalCaseId,
-}) {
+export async function getUploadLink(
+  reporter,
+  { baseUrl, accessToken, fileName, fileSize, treatmentId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
+) {
   const url = joinUrl(baseUrl, 'api/file/upload');
   const headers = {
     'Content-Type': 'application/json',
@@ -51,105 +38,87 @@ export async function getUploadLink({
   const model = { fileName, fileSize, treatmentId, treatmentFileType, externalCaseId };
 
   // Highlight which FileType is being sent in the upload body and where it came from.
-  step(
-    `>> Upload FileType for ${fileName}: ${treatmentFileType} (${fileTypeName(treatmentFileType)}) ` +
-      `— source: ${fileTypeSource}`
+  reporter.phase('link', 'active', `FileType ${treatmentFileType} (${fileTypeName(treatmentFileType)})`);
+  reporter.step(
+    `Upload FileType for ${fileName}: ${treatmentFileType} (${fileTypeName(treatmentFileType)}) — source: ${fileTypeSource}`
   );
-  step(`Requesting presigned upload URL for ${fileName} (treatmentFileType=${treatmentFileType})`);
-  logRequest({ label: `file/upload (${fileName})`, method: 'POST', url, headers, body: model });
+  reporter.step(`Requesting presigned upload URL for ${fileName} (treatmentFileType=${treatmentFileType})`);
 
-  let res;
-  try {
-    res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(model) });
-  } catch (err) {
-    throw new Error(`getUploadLink(${fileName}): network error contacting ${url} — ${err.message}`);
-  }
+  const { res, text } = await httpJson(reporter, {
+    label: `file/upload (${fileName})`,
+    method: 'POST',
+    url,
+    headers,
+    body: model,
+  });
 
-  const raw = await logResponse(`file/upload (${fileName})`, res);
   if (!res.ok) {
-    throw new Error(`getUploadLink(${fileName}): HTTP ${res.status}${raw ? ` — ${raw.slice(0, 500)}` : ''}`);
+    reporter.phase('link', 'error', `HTTP ${res.status}`);
+    throw new Error(`getUploadLink(${fileName}): HTTP ${res.status}${text ? ` — ${text.slice(0, 500)}` : ''}`);
   }
 
   // The body may be a raw JSON string (the URL) or an object { url }.
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(text);
   } catch {
-    parsed = raw.trim();
+    parsed = text.trim();
   }
 
   const presigned = extractPresignedUrl(parsed);
   if (!presigned || typeof presigned !== 'string') {
+    reporter.phase('link', 'error', 'no presigned URL in response');
     throw new Error(
-      `getUploadLink(${fileName}): could not extract a presigned URL from response: ${raw.slice(0, 300)}`
+      `getUploadLink(${fileName}): could not extract a presigned URL from response: ${text.slice(0, 300)}`
     );
   }
 
-  ok(`Got presigned URL for ${fileName}`);
+  reporter.ok(`Got presigned URL for ${fileName}`);
+  reporter.phase('link', 'done', 'presigned URL received');
   return presigned;
 }
 
 /**
  * PUT the raw file bytes to the presigned S3 URL, streaming so upload progress can be
  * reported. NO Authorization header on the S3 PUT — the presigned URL is self-authorizing.
- * `Content-Length` is set explicitly so S3 gets a non-chunked PUT. Expects 200/204.
- * @param {(sent:number,total:number)=>void} [onProgress]
+ * Expects 200/204.
  */
-export async function putFile(presignedUrl, bytes, onProgress) {
+export async function putFile(reporter, presignedUrl, bytes, fileName) {
   const total = bytes.length;
-  const headers = { 'Content-Type': 'application/octet-stream', 'Content-Length': String(total) };
+  reporter.phase('put', 'active', `PUT ${total} bytes to S3`);
+  reporter.step(`Uploading ${total} bytes to presigned S3 URL`);
 
-  step(`Uploading ${total} bytes to presigned S3 URL`);
-  logRequest({ label: 'S3 PUT', method: 'PUT', url: presignedUrl, headers, bodyNote: `<binary ${total} bytes> (streamed)` });
-
-  let sent = 0;
-  const CHUNK = 256 * 1024;
-  const body = new ReadableStream({
-    pull(controller) {
-      if (sent >= total) {
-        controller.close();
-        return;
-      }
-      const end = Math.min(sent + CHUNK, total);
-      controller.enqueue(bytes.subarray(sent, end));
-      sent = end;
-      if (onProgress) onProgress(sent, total);
+  const { res, text } = await httpPutStream(reporter, {
+    label: 'S3 PUT',
+    url: presignedUrl,
+    bytes,
+    onProgress: (sent, t) => {
+      const pct = t > 0 ? Math.min(100, Math.floor((sent / t) * 100)) : 100;
+      reporter.progress({ label: fileName, sent, total: t, pct });
     },
   });
 
-  let res;
-  try {
-    res = await fetch(presignedUrl, { method: 'PUT', headers, body, duplex: 'half' });
-  } catch (err) {
-    throw new Error(`putFile: network error PUTting to S3 — ${err.message}`);
-  }
-
-  const text = await logResponse('S3 PUT', res);
   if (res.status !== 200 && res.status !== 204) {
+    reporter.phase('put', 'error', `HTTP ${res.status}`);
     throw new Error(`putFile: S3 PUT returned HTTP ${res.status}${text ? ` — ${text.slice(0, 500)}` : ''}`);
   }
 
-  ok(`S3 PUT succeeded (HTTP ${res.status})`);
+  reporter.ok(`S3 PUT succeeded (HTTP ${res.status})`);
+  reporter.phase('put', 'done', `HTTP ${res.status}`);
 }
 
 /**
  * Upload one fixture end-to-end: read bytes -> getUploadLink -> putFile.
  * Returns a small result record for the final summary.
  */
-export async function uploadFixture({
-  baseUrl,
-  accessToken,
-  filePath,
-  fileName,
-  treatmentId,
-  treatmentFileType,
-  fileTypeSource = 'fixture default',
-  externalCaseId,
-}) {
+export async function uploadFixture(
+  reporter,
+  { baseUrl, accessToken, filePath, fileName, treatmentId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
+) {
   const bytes = await readFile(filePath);
-  info(`Read scan ${fileName} (${bytes.length} bytes)`);
+  reporter.info(`Read scan ${fileName} (${bytes.length} bytes)`);
 
-  const presignedUrl = await getUploadLink({
+  const presignedUrl = await getUploadLink(reporter, {
     baseUrl,
     accessToken,
     fileName,
@@ -160,9 +129,7 @@ export async function uploadFixture({
     externalCaseId,
   });
 
-  const progress = createProgress(fileName);
-  await putFile(presignedUrl, bytes, (s, t) => progress.update(s, t));
-  progress.done();
+  await putFile(reporter, presignedUrl, bytes, fileName);
 
   return { fileName, treatmentFileType, fileTypeSource, fileSize: bytes.length };
 }

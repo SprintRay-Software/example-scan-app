@@ -1,8 +1,9 @@
 {
   "name": "scanpro-simulator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.js",
   "engines": {
     "node": ">=18"
   },
@@ -10,9 +11,13 @@
     "scanpro-sim": "src/index.js"
   },
   "scripts": {
+    "app": "electron .",
     "start": "node --env-file=.env src/index.js",
     "register": "node --env-file-if-exists=.env src/index.js register",
     "unregister": "node --env-file-if-exists=.env src/index.js unregister",
     "status": "node --env-file-if-exists=.env src/index.js status"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0"
   }
 }

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+    <title>ScanPro Desktop Integration Simulator</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-title">ScanPro Desktop Integration Simulator</span>
+        <span class="brand-sub">device-login &rarr; token exchange &rarr; scan upload</span>
+      </div>
+      <div class="topbar-right">
+        <span id="env-chip" class="chip chip-muted" title="Backend origin in use">origin: &mdash;</span>
+        <span id="scheme-chip" class="chip chip-muted" title="OS URL-scheme handler status">scheme: &mdash;</span>
+        <button id="btn-claim-scheme" class="btn btn-ghost btn-sm" title="Register this app as the OS handler for the launch scheme">Claim handler</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- Left: config + input + controls -->
+      <aside class="sidebar">
+        <section class="panel">
+          <div class="panel-head"><h2>Configuration</h2><span id="env-note" class="hint"></span></div>
+          <label class="field">
+            <span>Backend origin</span>
+            <input id="cfg-base" type="text" spellcheck="false" placeholder="https://dashboard.sprintray.com" />
+          </label>
+          <label class="field">
+            <span>Client ID</span>
+            <input id="cfg-client-id" type="text" spellcheck="false" placeholder="your-integration-client-id" />
+          </label>
+          <label class="field">
+            <span>Client secret</span>
+            <span class="secret-row">
+              <input id="cfg-client-secret" type="password" spellcheck="false" placeholder="your-integration-client-secret" />
+              <button id="btn-toggle-secret" class="btn btn-ghost btn-sm" type="button">Show</button>
+            </span>
+          </label>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Launch input</h2></div>
+          <div class="seg" role="tablist">
+            <button id="mode-url" class="seg-btn seg-active" role="tab">Launch URL</button>
+            <button id="mode-manual" class="seg-btn" role="tab">Manual code</button>
+          </div>
+
+          <div id="pane-url" class="mode-pane">
+            <label class="field">
+              <span>Launch URL <em>(openScanPro://&lt;base64&gt;)</em></span>
+              <textarea id="in-launch-url" rows="4" spellcheck="false" placeholder="openScanPro://eyJjYWxsZXIiOns..."></textarea>
+            </label>
+            <button id="btn-decode" class="btn btn-ghost" type="button">Decode payload (no network)</button>
+          </div>
+
+          <div id="pane-manual" class="mode-pane" hidden>
+            <label class="field">
+              <span>Device-login code</span>
+              <input id="in-code" type="text" spellcheck="false" placeholder="dl_9f2a...c1" />
+            </label>
+            <label class="field">
+              <span>Treatment ID <em>(optional)</em></span>
+              <input id="in-treatment" type="text" spellcheck="false" placeholder="treatment GUID" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Upload</h2></div>
+          <label class="field">
+            <span>Scan file</span>
+            <span class="secret-row">
+              <input id="in-file" type="text" spellcheck="false" placeholder="default: fixtures/upper.stl or lower.stl" readonly />
+              <button id="btn-pick" class="btn btn-ghost btn-sm" type="button">Browse</button>
+            </span>
+            <span class="hint">Empty = pick the bundled fixture by the payload's fileType (1=upper, 2=lower).</span>
+          </label>
+          <label class="check">
+            <input id="in-refresh" type="checkbox" />
+            <span>Also exercise the token-refresh endpoint</span>
+          </label>
+        </section>
+
+        <div class="run-row">
+          <button id="btn-run" class="btn btn-primary">Run flow</button>
+          <button id="btn-clear" class="btn btn-ghost" type="button">Clear</button>
+        </div>
+      </aside>
+
+      <!-- Right: observability -->
+      <section class="content">
+        <div id="banner" class="banner" hidden></div>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Pipeline</h2><span class="hint">each step of the desktop-app side, in order</span></div>
+          <ol id="pipeline" class="pipeline">
+            <li class="pl-node" data-stage="decode"><span class="pl-dot"></span><span class="pl-name">Decode payload</span><span class="pl-status">pending</span><span class="pl-detail"></span></li>
+            <li class="pl-node" data-stage="exchange"><span class="pl-dot"></span><span class="pl-name">Exchange code for tokens</span><span class="pl-status">pending</span><span class="pl-detail"></span></li>
+            <li class="pl-node pl-optional" data-stage="refresh"><span class="pl-dot"></span><span class="pl-name">Refresh tokens (optional)</span><span class="pl-status">skipped</span><span class="pl-detail"></span></li>
+            <li class="pl-node" data-stage="link"><span class="pl-dot"></span><span class="pl-name">Get presigned upload URL</span><span class="pl-status">pending</span><span class="pl-detail"></span></li>
+            <li class="pl-node" data-stage="put"><span class="pl-dot"></span><span class="pl-name">PUT scan bytes to S3</span><span class="pl-status">pending</span><span class="pl-detail"></span></li>
+          </ol>
+          <div id="progress-wrap" class="progress-wrap" hidden>
+            <div class="progress-label"><span id="progress-name">upload</span><span id="progress-pct">0%</span></div>
+            <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Decoded launch payload</h2><span class="hint">base64 JSON handed over by the browser</span></div>
+          <div id="payload-empty" class="empty">No payload decoded yet. Paste a launch URL and Decode, or Run.</div>
+          <div id="payload-body" hidden>
+            <table class="kv" id="fields-table"><tbody></tbody></table>
+            <details open class="raw-details">
+              <summary>Full decoded JSON</summary>
+              <pre id="payload-json" class="code"></pre>
+            </details>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>HTTP transactions</h2>
+            <span class="hint">every request and its full response, on the wire</span>
+          </div>
+          <div id="tx-empty" class="empty">No requests yet. Run the flow to see each call in full.</div>
+          <div id="tx-list" class="tx-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Log</h2><button id="btn-log-clear" class="btn btn-ghost btn-sm" type="button">Clear log</button></div>
+          <pre id="log" class="log"></pre>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

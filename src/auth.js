@@ -1,15 +1,8 @@
 // Device-login token exchange + refresh against the Design-Service backend.
-// Uses global fetch (Node >=18). No dependencies. Every call is fully logged via http.js.
+// Every call is fully reported (request + response) via the injected reporter, so the
+// same instrumented flow drives both the CLI console and the Electron UI.
 
-import { step, ok, info } from './log.js';
-import { logRequest, logResponse } from './http.js';
-
-// Join a base URL and a path safely (path may or may not have a leading slash).
-function joinUrl(baseUrl, path) {
-  const b = String(baseUrl).replace(/\/+$/, '');
-  const p = String(path).replace(/^\/+/, '');
-  return `${b}/${p}`;
-}
+import { httpJson, joinUrl } from './core/net.js';
 
 // Map an error status + body to a clear, actionable message.
 function describeError(status, context, body) {
@@ -46,26 +39,26 @@ function assertTokens(tokens, context) {
  * POST {baseUrl}{tokenPath}  body { code, clientId, clientSecret }
  * tokenPath comes from the launch payload (a path such as /api/integration/device-login-token).
  */
-export async function exchangeCodeForTokens({ baseUrl, tokenPath, code, clientId, clientSecret }) {
+export async function exchangeCodeForTokens(reporter, { baseUrl, tokenPath, code, clientId, clientSecret }) {
   const url = joinUrl(baseUrl, tokenPath);
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
   const body = { code, clientId, clientSecret };
 
-  step('Exchanging device-login code for tokens');
-  logRequest({ label: 'token exchange', method: 'POST', url, headers, body });
+  reporter.phase('exchange', 'active', 'Exchanging device-login code for tokens');
+  reporter.step('Exchanging device-login code for tokens');
 
-  let res;
-  try {
-    res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-  } catch (err) {
-    throw new Error(`token exchange: network error contacting ${url} — ${err.message}`);
+  const { res, text } = await httpJson(reporter, { label: 'token exchange', method: 'POST', url, headers, body });
+
+  if (!res.ok) {
+    reporter.phase('exchange', 'error', `HTTP ${res.status}`);
+    throw new Error(describeError(res.status, 'token exchange', text));
   }
 
-  const text = await logResponse('token exchange', res);
-  if (!res.ok) throw new Error(describeError(res.status, 'token exchange', text));
-
   const tokens = assertTokens(parseJson(text, 'token exchange'), 'token exchange');
-  ok(`Token exchange succeeded (token_type=${tokens.token_type ?? 'n/a'}, expires_in=${tokens.expires_in ?? 'n/a'})`);
+  reporter.ok(
+    `Token exchange succeeded (token_type=${tokens.token_type ?? 'n/a'}, expires_in=${tokens.expires_in ?? 'n/a'})`
+  );
+  reporter.phase('exchange', 'done', `token_type=${tokens.token_type ?? 'n/a'}, expires_in=${tokens.expires_in ?? 'n/a'}`);
   return tokens;
 }
 
@@ -73,27 +66,28 @@ export async function exchangeCodeForTokens({ baseUrl, tokenPath, code, clientId
  * Refresh tokens (optional demo path).
  * POST {baseUrl}/api/integration/device-login-token/refresh  body { refreshToken, clientId, clientSecret }
  */
-export async function refreshTokens({ baseUrl, refreshToken, clientId, clientSecret }) {
+export async function refreshTokens(reporter, { baseUrl, refreshToken, clientId, clientSecret }) {
   const url = joinUrl(baseUrl, 'api/integration/device-login-token/refresh');
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
   const body = { refreshToken, clientId, clientSecret };
 
-  step('Refreshing tokens');
-  if (!refreshToken) throw new Error('refresh: no refresh_token available to refresh');
-  logRequest({ label: 'token refresh', method: 'POST', url, headers, body });
-
-  let res;
-  try {
-    res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-  } catch (err) {
-    throw new Error(`refresh: network error contacting ${url} — ${err.message}`);
+  reporter.phase('refresh', 'active', 'Refreshing tokens');
+  reporter.step('Refreshing tokens');
+  if (!refreshToken) {
+    reporter.phase('refresh', 'error', 'no refresh_token available');
+    throw new Error('refresh: no refresh_token available to refresh');
   }
 
-  const text = await logResponse('token refresh', res);
-  if (!res.ok) throw new Error(describeError(res.status, 'refresh', text));
+  const { res, text } = await httpJson(reporter, { label: 'token refresh', method: 'POST', url, headers, body });
+
+  if (!res.ok) {
+    reporter.phase('refresh', 'error', `HTTP ${res.status}`);
+    throw new Error(describeError(res.status, 'refresh', text));
+  }
 
   const tokens = assertTokens(parseJson(text, 'refresh'), 'refresh');
-  ok('Token refresh succeeded');
-  info(`new access_token expires_in=${tokens.expires_in ?? 'n/a'}`);
+  reporter.ok('Token refresh succeeded');
+  reporter.info(`new access_token expires_in=${tokens.expires_in ?? 'n/a'}`);
+  reporter.phase('refresh', 'done', `expires_in=${tokens.expires_in ?? 'n/a'}`);
   return tokens;
 }

@@ -2,11 +2,19 @@
 
 English | [中文](./README.zh-CN.md)
 
-A reference implementation and command-line **example of the desktop-app side** of SprintRay's
+A reference implementation and **example of the desktop-app side** of SprintRay's
 device-login + scan-upload integration. Use it to understand the flow and to test your integration
 end to end before building it into your real desktop scanner app.
 
-Zero dependencies — Node.js ≥ 18 built-ins only.
+It ships two front ends over **one shared, fully-instrumented flow** (`src/core/`):
+
+- a **desktop UI (Electron)** — `npm run app` — that shows the decoded launch payload, a live
+  pipeline of every step, and **every HTTP request and its full response** on the wire, so a tester
+  can watch the whole data flow (see [Desktop UI](#desktop-ui-electron));
+- a **command-line runner** — `npm start` — same flow, logged to the console.
+
+The CLI and its core are **zero-dependency** (Node.js ≥ 18 built-ins only). Electron is an optional
+`devDependency`, pulled in only for the UI.
 
 ## How the integration works
 
@@ -319,6 +327,39 @@ tested path for scheme registration).
 ```sh
 cp .env.example .env      # fill in origin, client id/secret, scheme
 ```
+
+## Desktop UI (Electron)
+
+The observability-focused way to test the integration. It runs the exact same flow the CLI does, but
+renders it visually so you can watch each step and inspect every byte on the wire.
+
+```sh
+npm install               # pulls in Electron (a devDependency)
+npm run app               # launch the desktop UI
+```
+
+The window has three parts:
+
+- **Left — Configuration & input.** Backend origin, client id/secret, and URL scheme are prefilled
+  from `.env` (editable per run). Paste a `openScanPro://<base64>` **launch URL**, or switch to
+  **Manual code** to run with an explicit `code` + treatment id. Optionally pick a custom scan file
+  and toggle the token-refresh step.
+- **Right — Observability.**
+  - **Pipeline** — the desktop-app steps in order (decode → exchange → optional refresh → presigned
+    URL → S3 PUT), each showing live status and a one-line detail.
+  - **Decoded launch payload** — the extracted fields (`code`, `tokenEndpoint`, `treatmentId`,
+    `externalCaseId`, `fileType`) plus the full decoded JSON. **Decode payload** shows this without
+    touching the network.
+  - **HTTP transactions** — one expandable card per call, each with the **complete request** (method,
+    URL, headers, body) and the **complete response** (status, headers, body, duration). Bodies are
+    pretty-printed and copyable; the S3 PUT body is shown as `<binary N bytes>`.
+  - **Log** — the same timestamped step/ok/fail/info stream the CLI prints.
+
+**Launch from the browser.** The app registers itself as the OS handler for the URL scheme
+(`app.setAsDefaultProtocolClient`), so clicking **OR Scan** in the SprintRay web app can open it
+directly — the deep link lands in the launch-URL field and auto-decodes. The **Claim handler** button
+(top-right) re-claims the scheme; on macOS this is reliable from a packaged build, so during
+development pasting the launch URL is the sure path.
 
 ### Register the URL scheme (real OS launch)
 

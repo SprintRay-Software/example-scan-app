@@ -19,17 +19,14 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-import { loadConfig, normalizeBaseUrl } from './config.js';
-import { step, ok, fail, info } from './log.js';
-import { parseLaunchUrl, extractFields, TreatmentFileType, fileTypeName } from './payload.js';
-import { exchangeCodeForTokens, refreshTokens } from './auth.js';
-import { uploadFixture } from './upload.js';
+import { loadConfig } from './config.js';
+import { fail } from './log.js';
+import { runFlow } from './core/flow.js';
+import { createConsoleReporter } from './core/console-reporter.js';
 import { SCHEME_COMMANDS, runSchemeCommand } from './scheme-cli.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = resolve(__dirname, '..', 'fixtures');
-
-const DEFAULT_TOKEN_PATH = '/api/integration/device-login-token';
 
 const USAGE = `ScanPro desktop-app simulator
 
@@ -134,119 +131,19 @@ async function main() {
   }
 
   const config = loadConfig(process.env);
+  const reporter = createConsoleReporter();
 
-  // Resolve the run parameters from whichever form was used.
-  let baseUrl = config.baseUrl;
-  let tokenPath = DEFAULT_TOKEN_PATH;
-  let code;
-  let treatmentId;
-  let externalCaseId;
-  // Requested TreatmentFiles type from the launch payload; null = full scan (use per-file default).
-  let payloadFileType = null;
+  const input = hasFormA
+    ? { launchUrl: args.launchUrl, demoRefresh: args.demoRefresh }
+    : {
+        code: args.code,
+        baseUrlOverride: args.baseUrlOverride,
+        treatmentId: args.treatmentId,
+        demoRefresh: args.demoRefresh,
+      };
 
-  if (hasFormA) {
-    step('Form A: parsing launch URL');
-    const payload = parseLaunchUrl(args.launchUrl);
-    info('decoded launch payload (base64 JSON):\n' + JSON.stringify(payload, null, 2));
-    const fields = extractFields(payload);
-    code = fields.code;
-    // tokenEndpoint from the payload is a PATH; effective endpoint = BASE_URL + path.
-    tokenPath = fields.tokenEndpoint;
-    treatmentId = fields.treatmentId;
-    externalCaseId = fields.externalCaseId;
-    payloadFileType = fields.fileType;
-    info(`code=${code}`);
-    info(`tokenEndpoint (path)=${tokenPath}`);
-    info(`treatmentId=${treatmentId}`);
-    info(`externalCaseId=${externalCaseId}`);
-    info(
-      payloadFileType === null
-        ? 'launch payload fileType = null (full scan; per-file default will be used)'
-        : `launch payload fileType = ${payloadFileType} (${fileTypeName(payloadFileType)})`
-    );
-  } else {
-    step('Form B: using explicit flags');
-    code = args.code;
-    if (args.baseUrlOverride) {
-      baseUrl = normalizeBaseUrl(args.baseUrlOverride);
-    }
-    tokenPath = DEFAULT_TOKEN_PATH;
-    treatmentId = args.treatmentId ?? null;
-    externalCaseId = args.treatmentId ?? null;
-    info(`code=${code}`);
-    info(`baseUrl=${baseUrl}`);
-    info(`treatmentId=${treatmentId ?? '(none)'}`);
-  }
-
-  info(`Effective token endpoint = ${baseUrl}${tokenPath.startsWith('/') ? '' : '/'}${tokenPath}`);
-
-  // 1) Exchange the code for tokens.
-  let tokens = await exchangeCodeForTokens({
-    baseUrl,
-    tokenPath,
-    code,
-    clientId: config.clientId,
-    clientSecret: config.clientSecret,
-  });
-
-  // Optional: exercise the refresh endpoint.
-  if (args.demoRefresh) {
-    const refreshed = await refreshTokens({
-      baseUrl,
-      refreshToken: tokens.refresh_token,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-    });
-    // Use the freshly refreshed access token for the uploads.
-    tokens = refreshed;
-  }
-
-  // 2) Upload exactly one scan, chosen by the requested fileType (upper vs lower).
-  const hasType = payloadFileType !== null && payloadFileType !== undefined;
-  const treatmentFileType = hasType ? Number(payloadFileType) : TreatmentFileType.UpperJaw;
-  const fileTypeSource = hasType ? 'launch payload' : 'default (no fileType in payload)';
-  const isLower = treatmentFileType === TreatmentFileType.LowerJaw;
-  const fileName = isLower ? 'lower.stl' : 'upper.stl';
-
-  step(
-    `Uploading one scan for FileType ${treatmentFileType} (${fileTypeName(treatmentFileType)}) ` +
-      `from ${fileTypeSource}: ${fileName}`
-  );
-
-  const results = [];
-  const failures = [];
-
-  try {
-    const r = await uploadFixture({
-      baseUrl,
-      accessToken: tokens.access_token,
-      filePath: resolve(FIXTURES_DIR, fileName),
-      fileName,
-      treatmentId,
-      treatmentFileType,
-      fileTypeSource,
-      externalCaseId,
-    });
-    results.push(r);
-  } catch (err) {
-    fail(`Upload failed for ${fileName}: ${err.message}`);
-    failures.push({ fileName, error: err.message });
-  }
-
-  // 3) Final summary.
-  console.log('\n──────── summary ────────');
-  info(`uploaded: ${results.length}/1`);
-  for (const r of results) {
-    ok(
-      `${r.fileName} — FileType ${r.treatmentFileType} (${fileTypeName(r.treatmentFileType)}) ` +
-        `from ${r.fileTypeSource}, ${r.fileSize} bytes`
-    );
-  }
-  for (const f of failures) {
-    fail(`${f.fileName}: ${f.error}`);
-  }
-
-  process.exit(failures.length === 0 ? 0 : 1);
+  const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR });
+  process.exit(summary.ok ? 0 : 1);
 }
 
 main().catch((err) => {

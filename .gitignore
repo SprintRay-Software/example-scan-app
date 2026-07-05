@@ -1,5 +1,8 @@
 # Local dev env (contains client secret)
 .env
 
+# Dependencies (Electron is a devDependency; the CLI stays zero-dependency)
+node_modules
+
 # OS junk
 .DS_Store

@@ -2,10 +2,18 @@
 
 [English](./README.md) | 中文
 
-一个**桌面应用侧**的参考实现与命令行**示例应用**,对应 SprintRay 的 device-login + 扫描文件上传集成。
+一个**桌面应用侧**的参考实现与**示例应用**,对应 SprintRay 的 device-login + 扫描文件上传集成。
 用它理解整个流程,并在把逻辑接入你真实的桌面扫描仪应用之前完成端到端联调。
 
-零依赖 —— 仅使用 Node.js ≥ 18 内置能力。
+它在**同一套完整埋点的流程**(`src/core/`)之上提供两个前端:
+
+- **桌面 UI(Electron)** —— `npm run app` —— 展示解析出的启动 payload、逐步骤的实时流水线,以及
+  **每一次 HTTP 请求的完整 request 与 response**,让测试者能观测到完整的数据流(见
+  [桌面 UI](#桌面-uielectron));
+- **命令行运行器** —— `npm start` —— 同一套流程,输出到控制台。
+
+命令行及其核心为**零依赖**(仅 Node.js ≥ 18 内置能力);Electron 仅作为可选的 `devDependency`,只在
+运行 UI 时才需要。
 
 ## 集成流程
 
@@ -308,6 +316,35 @@ payload 与上传调用中用到的数值枚举。
 ```sh
 cp .env.example .env      # 填入 origin、client id/secret、scheme
 ```
+
+## 桌面 UI(Electron)
+
+推荐用于联调的方式。它运行与命令行完全相同的流程,但以可视化方式呈现,便于观测每个步骤并检查
+网络上传输的每一个字节。
+
+```sh
+npm install               # 会安装 Electron(devDependency)
+npm run app               # 启动桌面 UI
+```
+
+窗口分三块:
+
+- **左侧 —— 配置与输入。** 后端 origin、client id/secret、URL scheme 会从 `.env` 预填(可按次修改)。
+  粘贴 `openScanPro://<base64>` **启动 URL**,或切到 **Manual code** 用显式 `code` + treatment id 运行;
+  还可选择自定义扫描文件、勾选是否额外走 token 刷新步骤。
+- **右侧 —— 观测区。**
+  - **Pipeline** —— 桌面应用侧的步骤按序展示(解析 → 换 token → 可选刷新 → 预签名 URL → S3 PUT),
+    每步显示实时状态与一行摘要。
+  - **Decoded launch payload** —— 解析出的字段(`code`、`tokenEndpoint`、`treatmentId`、
+    `externalCaseId`、`fileType`)以及完整的解码 JSON;**Decode payload** 可在不发起网络请求的情况下预览。
+  - **HTTP transactions** —— 每次调用一张可展开的卡片,包含**完整 request**(method、URL、headers、body)
+    与**完整 response**(status、headers、body、耗时);body 会格式化并可复制,S3 PUT 的 body 显示为
+    `<binary N bytes>`。
+  - **Log** —— 与命令行一致的带时间戳 step/ok/fail/info 流。
+
+**从浏览器拉起。** 应用会把自身注册为该 URL scheme 的系统处理器(`app.setAsDefaultProtocolClient`),
+因此在 SprintRay 网页点击 **OR Scan** 可直接拉起它 —— 深链会落入启动 URL 输入框并自动解析。右上角
+**Claim handler** 按钮可重新抢占 scheme;macOS 上打包后的构建更可靠,开发期直接粘贴启动 URL 最稳妥。
 
 ### 注册 URL scheme(真实的系统拉起)
 
