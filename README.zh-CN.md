@@ -102,9 +102,9 @@ sequenceDiagram
 
 | 环境 | `{ORIGIN}` |
 |---|---|
-| dev | `https://dashboard.sprintray.com` |
-| staging | `https://dashboard.sprintray.com` |
-| prod | `https://dashboard.sprintray.com` |
+| 生产 | `https://dashboard.sprintray.com` |
+
+对应环境的 origin 由 SprintRay 提供。
 
 ### 1. 用 code 换取 token
 

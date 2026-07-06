@@ -109,9 +109,9 @@ suffix; the paths already include it):
 
 | Environment | `{ORIGIN}` |
 |---|---|
-| dev | `https://dashboard.sprintray.com` |
-| staging | `https://dashboard.sprintray.com` |
-| prod | `https://dashboard.sprintray.com` |
+| production | `https://dashboard.sprintray.com` |
+
+SprintRay provides the origin for your target environment.
 
 ### 1. Exchange the code for a token
 
