@@ -4,5 +4,8 @@
 # Dependencies (Electron is a devDependency; the CLI stays zero-dependency)
 node_modules
 
+# Packaged builds (electron-builder output)
+release
+
 # OS junk
 .DS_Store

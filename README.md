@@ -18,7 +18,7 @@ can reach a desktop scanner, alongside the URL scheme (see
 [Local HTTP service](#local-http-service-127001)).
 
 The CLI and its core are **zero-dependency** (Node.js ≥ 18 built-ins only). Electron is an optional
-`devDependency`, pulled in only for the UI.
+`devDependency`, pulled in only for the UI; `electron-builder` only for packaging.
 
 ## How the integration works
 
@@ -571,6 +571,41 @@ you find out here that the payload is malformed, instead of watching a scanner s
 
 - `0` — token exchange + all uploads succeeded (or a register/status/unregister command completed)
 - `1` — bad arguments, missing env, a failed exchange/upload, or `serve` finding no free port
+
+## Building installers
+
+```sh
+npm run dist:win     # Windows x64 → release/*.exe  (NSIS installer)
+npm run dist:mac     # macOS arm64 → release/*.dmg + *.zip
+```
+
+Each platform builds on its own OS. Targets:
+
+| Target | Arch | Output | Supported on |
+|---|---|---|---|
+| Windows | x64 | NSIS installer (`.exe`), per-user, no admin needed | Windows 10 1809 and newer |
+| macOS | arm64 | `.dmg` and `.zip` | Apple silicon, macOS 12+ |
+
+The packaged app registers the `openScanPro` scheme with the OS by itself and reads its `.env` from
+next to the executable, falling back to the per-user data directory (the UI's Configuration panel
+shows which file it found, and the fields stay editable per run).
+
+Builds are **unsigned**. On macOS that means Gatekeeper quarantines the download:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/ScanPro Integration Example.app"
+```
+
+**Releases.** Pushing a `v*` tag builds both targets and attaches them to a GitHub Release under
+that tag (`.github/workflows/release.yml`). The tag sets the version the app reports, so `v0.3.0`
+produces an app whose `/status` reports `0.3.0`:
+
+```sh
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+Run the workflow manually (**Actions → release → Run workflow**) to build both targets without
+cutting a release — the installers come back as workflow artifacts.
 
 ## Treatment scan files by treatment type
 

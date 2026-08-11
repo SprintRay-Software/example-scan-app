@@ -22,8 +22,27 @@ import { startScanProLocalServer, summarizeArgument } from '../src/local-server/
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SIM_DIR = resolve(__dirname, '..');
-const FIXTURES_DIR = resolve(SIM_DIR, 'fixtures');
-const ENV_FILE = resolve(SIM_DIR, '.env');
+
+// Packaged, the app tree lives inside app.asar. `fixtures/` is unpacked (see the build config)
+// so the scan files are real files on disk that a stream can read.
+const FIXTURES_DIR = app.isPackaged
+  ? join(process.resourcesPath, 'app.asar.unpacked', 'fixtures')
+  : resolve(SIM_DIR, 'fixtures');
+
+// In development the .env sits in the repo. A packaged app cannot have one written into its
+// read-only bundle, so look beside the executable first (the natural place for a tester to
+// drop one), then in the per-user data directory.
+function resolveEnvFile() {
+  if (!app.isPackaged) return resolve(SIM_DIR, '.env');
+  const candidates = [
+    join(dirname(app.getPath('exe')), '.env'),
+    join(app.getPath('userData'), '.env'),
+    join(process.resourcesPath, '.env'),
+  ];
+  return candidates.find((p) => existsSync(p)) ?? candidates[1];
+}
+
+const ENV_FILE = resolveEnvFile();
 
 // ---------------------------------------------------------------------------
 // .env — read (never write to process.env) so the UI can prefill config fields.
@@ -63,6 +82,7 @@ function defaults() {
     clientSecret: ENV.SCANPRO_CLIENT_SECRET || '',
     urlScheme: URL_SCHEME,
     envFileFound: existsSync(ENV_FILE),
+    envFilePath: ENV_FILE,
     fixtures: { upper: join(FIXTURES_DIR, 'upper.stl'), lower: join(FIXTURES_DIR, 'lower.stl') },
   };
 }
@@ -223,7 +243,7 @@ async function startLocalService() {
     { ...process.env, ...ENV },
     {
       appVersion: app.getVersion(),
-      installPath: SIM_DIR,
+      installPath: app.isPackaged ? dirname(app.getPath('exe')) : SIM_DIR,
       stateDir: app.getPath('userData'),
     }
   );

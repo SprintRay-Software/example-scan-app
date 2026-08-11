@@ -16,9 +16,81 @@
     "serve": "node --env-file-if-exists=.env src/index.js serve",
     "register": "node --env-file-if-exists=.env src/index.js register",
     "unregister": "node --env-file-if-exists=.env src/index.js unregister",
-    "status": "node --env-file-if-exists=.env src/index.js status"
+    "status": "node --env-file-if-exists=.env src/index.js status",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win --x64",
+    "dist:mac": "electron-builder --mac --arm64"
+  },
+  "build": {
+    "appId": "com.sprintray.scanpro.example",
+    "productName": "ScanPro Integration Example",
+    "copyright": "Copyright © SprintRay",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "fixtures/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "fixtures/**"
+    ],
+    "protocols": [
+      {
+        "name": "SprintRay ScanPro launch",
+        "schemes": [
+          "openScanPro"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "ScanPro Integration Example"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": null
+    },
+    "dmg": {
+      "writeUpdateInfo": false
+    },
+    "publish": null
   },
   "devDependencies": {
-    "electron": "^43.0.0"
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3"
   }
 }
