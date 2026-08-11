@@ -13,6 +13,7 @@
   "scripts": {
     "app": "electron .",
     "start": "node --env-file=.env src/index.js",
+    "serve": "node --env-file-if-exists=.env src/index.js serve",
     "register": "node --env-file-if-exists=.env src/index.js register",
     "unregister": "node --env-file-if-exists=.env src/index.js unregister",
     "status": "node --env-file-if-exists=.env src/index.js status"

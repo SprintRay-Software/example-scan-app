@@ -13,6 +13,10 @@ It ships two front ends over **one shared, fully-instrumented flow** (`src/core/
   can watch the whole data flow (see [Desktop UI](#desktop-ui-electron));
 - a **command-line runner** — `npm start` — same flow, logged to the console.
 
+Both front ends also serve the **local HTTP service on `127.0.0.1`** — the second way the web app
+can reach a desktop scanner, alongside the URL scheme (see
+[Local HTTP service](#local-http-service-127001)).
+
 The CLI and its core are **zero-dependency** (Node.js ≥ 18 built-ins only). Electron is an optional
 `devDependency`, pulled in only for the UI.
 
@@ -23,7 +27,8 @@ token ever travels in the launch URL**:
 
 1. **Launch.** From a treatment page, the SprintRay web app opens your app through its custom URL
    scheme with a base64-encoded JSON payload — `yourscheme://<base64_json>` — carrying a **one-time,
-   short-lived `code`**.
+   short-lived `code`**. (The same payload can instead arrive over the
+   [local HTTP service](#local-http-service-127001), if your app runs one.)
 2. **Decode.** Base64-decode the payload and read the `code`, the token-endpoint path, and the
    treatment/case identifiers (see [Launch payload](#launch-payload)).
 3. **Exchange.** POST the `code` + your client credentials over HTTPS to obtain the signed-in
@@ -318,6 +323,8 @@ No enum is defined for this yet; it is currently always the fixed value `0`.
 | Client id | `SCANPRO_CLIENT_ID` | your integration's public id |
 | Client secret | `SCANPRO_CLIENT_SECRET` | keep server-side / in your app only |
 | URL scheme | `SCANPRO_URL_SCHEME` | the scheme your app registers, e.g. `openScanPro` |
+| Telemetry endpoint | `SCANPRO_TELEMETRY_URL` | only for the port-exhaustion event; per environment |
+| Telemetry API key | `SCANPRO_TELEMETRY_API_KEY` | the only credential the telemetry endpoint takes |
 
 ## Running the example app
 
@@ -397,10 +404,173 @@ payload's `fileType` is `2` (lower jaw), otherwise `fixtures/upper.stl` — with
 headers, body) so you can see exactly what to send and what to expect. Swap the files in `fixtures/`
 to upload your own scans.
 
+## Local HTTP service (`127.0.0.1`)
+
+The **second way** the web app can reach the desktop. Instead of handing the payload to an OS URL
+scheme, the browser probes a fixed port range on loopback for a resident service and posts the
+payload to it. It is the same base64 JSON payload either way, and in this example app both
+transports end up in the same window.
+
+This app implements the service side of that contract, so you can point the web app at it and see
+exactly what a caller sees — including the CORS behaviour, which is where browser-to-loopback
+integrations usually break.
+
+The desktop UI starts the service on launch; the **server** chip in the top-right shows the port it
+took (hover for the endpoints). To run it on its own, without Electron:
+
+```sh
+npm run serve                  # bind a port and answer /status and /start
+npm run serve -- --run-flow    # …and on /start, actually exchange the code and upload a scan
+npm run serve -- --help        # all options: port range, reported version/state, host check
+```
+
+### Discovery
+
+There is **no fixed port** — the service takes the first one it can bind, so the caller has to
+probe. Both sides must agree on the range:
+
+| | |
+|---|---|
+| Port range | `29083`–`29183` inclusive (101 ports) |
+| Selection | on startup, try `29083` upwards; first port that binds wins |
+| Bind address | `127.0.0.1` only — never an external interface |
+| Range exhausted | the service does **not** start; it reports telemetry instead (see below) |
+
+**How a caller probes:** `GET /scanpro/v1/status` on each port from `29083` upwards. The first one
+that answers `200` with `"service": "SprintRayScanService"` is this service. Cache that port and
+reuse it; only probe again after a request to it fails.
+
+> Matching on `service` matters. A response carrying only a `version` field is not enough to tell
+> this service apart from any unrelated program that happens to hold the port.
+
+### `GET /scanpro/v1/status`
+
+Installed state, running state and version in one call — no need to probe them separately.
+
+```console
+$ curl -s http://127.0.0.1:29083/scanpro/v1/status
+{"service":"SprintRayScanService","running":true,"installed":true,"version":"0.2.0"}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `service` | string | always `SprintRayScanService` — the discovery marker |
+| `running` | bool | ScanPro is running |
+| `installed` | bool | ScanPro is installed |
+| `version` | string | ScanPro's version |
+
+### `POST /scanpro/v1/start`
+
+Starts ScanPro with a launch payload. **The call blocks** until the start has succeeded or failed,
+so give it a generous timeout — and if you do time out, call `/status` before retrying, because
+ScanPro may well be up already.
+
+`argument` is the launch payload as **base64-encoded JSON** — the same payload the URL scheme
+carries. It is required and must not be empty.
+
+```sh
+ARGUMENT=$(node -e 'console.log(Buffer.from(JSON.stringify({
+  caller: { name: "SprintRay", version: "1.0.10.0" },
+  case:   { name: "Jane Doe", ID: "04024e3b-ff28-4d6a-bdea-4c777e4cfb0d" },
+  language: "en_US", serverType: 0, toothSystem: "fdi",
+  treatment: { teeth: [{ number: "17", workType: "Crown" }] }
+})).toString("base64"))')
+
+curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
+  -H 'Content-Type: application/json' \
+  -d "{\"argument\":\"$ARGUMENT\"}"
+```
+
+```json
+{ "status": true, "started": true }
+```
+
+`status` is the field the contract defines; `started` is the same value under a clearer name, sent
+alongside it so either reading works. A failed start adds `errorCode` and `message`.
+
+Sending a payload that also carries SprintRay's `auth` block makes this a complete launch: in the
+desktop UI the window comes forward with the payload decoded, and under `serve --run-flow` the
+example app exchanges the code and uploads a scan before answering the request.
+
+### Errors
+
+`200` means the request was handled, **not** that the business result was positive — "ScanPro is not
+installed" is a `200` with `installed: false`. Genuine errors use status codes and a fixed envelope:
+
+```json
+{ "error": { "code": "ARGUMENT_REQUIRED", "message": "`argument` is required and must be a non-empty string" } }
+```
+
+| Status | `code` | When |
+|---|---|---|
+| `400` | `INVALID_JSON` | the request body is not JSON |
+| `400` | `ARGUMENT_REQUIRED` | `argument` missing, not a string, or empty |
+| `400` | `ARGUMENT_NOT_BASE64_JSON` | `argument` does not decode to a JSON object |
+| `403` | `HOST_NOT_ALLOWED` | the `Host` header is not a loopback name (see below) |
+| `404` | `NOT_FOUND` | unknown path |
+| `405` | `METHOD_NOT_ALLOWED` | right path, wrong method |
+| `413` | `PAYLOAD_TOO_LARGE` | body over 256 KB |
+| `500` | `START_ERROR` / `STATUS_ERROR` | the service itself failed |
+
+`code` is a stable constant — branch on it, not on `message`.
+
+### CORS and Chrome's Private Network Access
+
+The caller is an HTTPS page reaching into `http://127.0.0.1`, which is cross-origin. Without the
+right headers the browser discards the response even though the request succeeded, so the service:
+
+- echoes the request's `Origin` in `Access-Control-Allow-Origin` and always sends `Vary: Origin`;
+- answers `OPTIONS` preflights with the allowed methods and headers;
+- answers a preflight carrying `Access-Control-Request-Private-Network: true` with
+  `Access-Control-Allow-Private-Network: true` — **Chrome blocks the call without this**.
+
+By default any origin is echoed, which is the easiest thing to test against. Set
+`SCANPRO_LOCAL_SERVER_ORIGINS` to a comma-separated list to make it an allowlist; any other origin
+then gets no `Access-Control-Allow-Origin` back and the browser blocks it.
+
+The service is unauthenticated and relies on being reachable only over loopback. That holds only
+while requests really are addressed to loopback, so a request whose `Host` header is some other
+name — the shape a DNS-rebinding attack takes — is rejected with `403`. Pass `--allow-any-host` to
+turn the check off while debugging a proxy.
+
+### When every port is taken
+
+If all 101 ports are busy the service does not start, the web app's probe finds nothing, and to the
+doctor it just looks like clicking **Scan** does nothing. Nothing on the machine notices, so the
+service reports it:
+
+| | |
+|---|---|
+| `eventName` | `local_server.port_unavailable` |
+| `severity` | `error` |
+| `eventData` | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
+
+The batch reports `app.name` as `ScanPro`, carries no `userId` (the service starts before anyone
+logs in, and a placeholder is worse than nothing) and no `scanner` object. It is sent only when
+both `SCANPRO_TELEMETRY_URL` and `SCANPRO_TELEMETRY_API_KEY` are set; otherwise the failure is just
+logged locally. `deviceId` is a SHA-256 of the OS machine id and `installationId` is generated once
+and persisted, both under `~/.sprintray-scanpro-example/` (the app's user-data directory when
+packaged).
+
+### Where this goes beyond the written contract
+
+Four additions, all backwards-compatible — a client that ignores them still works:
+
+| Addition | Why |
+|---|---|
+| `service` in `/status` | `version` alone cannot identify the service during a port probe |
+| `{ error: { code, message } }` on 4xx/5xx | the contract only defines success bodies; `code` is a stable constant, not localized prose |
+| `started` next to `status` | `/status` uses semantic names (`running`, `installed`); `/start` returning a generic `status` reads inconsistently |
+| loopback `Host` check | an unauthenticated loopback service otherwise trusts any name that resolves to `127.0.0.1` |
+
+One deliberate difference in behaviour: a real service hands `argument` to ScanPro untouched, while
+this one decodes it and answers `400` when it is not base64 JSON. That is the point of a simulator —
+you find out here that the payload is malformed, instead of watching a scanner sit idle.
+
 ## Exit codes
 
 - `0` — token exchange + all uploads succeeded (or a register/status/unregister command completed)
-- `1` — bad arguments, missing env, or a failed exchange/upload
+- `1` — bad arguments, missing env, a failed exchange/upload, or `serve` finding no free port
 
 ## Treatment scan files by treatment type
 

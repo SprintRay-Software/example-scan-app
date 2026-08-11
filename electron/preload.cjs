@@ -28,10 +28,19 @@ contextBridge.exposeInMainWorld('scanpro', {
     return () => ipcRenderer.removeListener('flow:event', listener);
   },
 
-  // a deep link arrived from the OS (openScanPro://…)
-  onDeepLink: (cb) => {
-    const listener = (_event, url) => cb(url);
-    ipcRenderer.on('deeplink', listener);
-    return () => ipcRenderer.removeListener('deeplink', listener);
+  // a launch payload arrived — { url, source } where source is 'os' (the URL scheme)
+  // or 'local-server' (POST /scanpro/v1/start on 127.0.0.1)
+  onLaunch: (cb) => {
+    const listener = (_event, launch) => cb(launch);
+    ipcRenderer.on('launch', listener);
+    return () => ipcRenderer.removeListener('launch', listener);
+  },
+
+  // local HTTP service: current state, plus pushes when it changes
+  getLocalServerState: () => ipcRenderer.invoke('localserver:get'),
+  onLocalServerState: (cb) => {
+    const listener = (_event, state) => cb(state);
+    ipcRenderer.on('localserver:state', listener);
+    return () => ipcRenderer.removeListener('localserver:state', listener);
   },
 });
