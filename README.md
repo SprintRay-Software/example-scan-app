@@ -419,10 +419,22 @@ The desktop UI starts the service on launch; the **server** chip in the top-righ
 took (hover for the endpoints). To run it on its own, without Electron:
 
 ```sh
-npm run serve                  # bind a port and answer /status and /start
-npm run serve -- --run-flow    # …and on /start, actually exchange the code and upload a scan
+npm run serve                  # bind a port; /start launches the desktop app via the URL scheme
+npm run serve -- --run-flow    # /start instead exchanges the code and uploads a scan in-process
 npm run serve -- --help        # all options: port range, reported version/state, host check
 ```
+
+Run headlessly, `/start` launches the app the way the real resident service does — by handing the
+payload to the OS handler for the URL scheme, so whatever `npm run register` or an installed build
+claimed is what starts. The launch is then **confirmed**: the launcher exiting 0 only means the OS
+accepted the request, and a stale handler that starts and dies immediately would otherwise pass as
+success, so the response reports what actually happened:
+
+| `errorCode` | Meaning |
+|---|---|
+| `NO_HANDLER_REGISTERED` | nothing claims the scheme — install a build or run `npm run register` |
+| `LAUNCH_NOT_CONFIRMED` | the OS accepted the launch but no process stayed up (usually a stale handler) |
+| `LAUNCH_FAILED` | the OS launcher itself reported an error |
 
 ### Discovery
 
@@ -590,11 +602,44 @@ The packaged app registers the `openScanPro` scheme with the OS by itself and re
 next to the executable, falling back to the per-user data directory (the UI's Configuration panel
 shows which file it found, and the fields stay editable per run).
 
-Builds are **unsigned**. On macOS that means Gatekeeper quarantines the download:
+### Signing (macOS: required, not optional)
+
+Without a Developer ID certificate the macOS build is only **ad-hoc signed**, and on macOS 15 and
+newer Gatekeeper *rejects* that. The failure gives you nothing to go on: the app starts and is
+killed within a second, with no dialog and no output — so opening it from Finder, through the
+`openScanPro://` scheme, or through the local service's `/start` all look like "nothing happened".
+Running the binary straight from a terminal still works, which is what makes this so easy to miss:
+
+```sh
+# works even when the app cannot be launched normally
+"/Applications/ScanPro Integration Example.app/Contents/MacOS/ScanPro Integration Example"
+
+# what the OS actually thinks of the build
+spctl -a -vvv -t exec "/Applications/ScanPro Integration Example.app"   # -> rejected
+```
+
+To ship a build testers can actually open, add these repository secrets and the release workflow
+signs (and notarizes) automatically:
+
+| Secret | Purpose |
+|---|---|
+| `MAC_CSC_LINK` | Developer ID Application certificate (`.p12`, base64-encoded) |
+| `MAC_CSC_KEY_PASSWORD` | password for that `.p12` |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | notarization |
+
+Without them the workflow still builds, logs a warning, and prints the resulting signature and
+Gatekeeper verdict in the job output.
+
+**Running an unsigned build anyway.** Right-click the app > **Open** once and confirm, or approve it
+under **System Settings > Privacy & Security**. Clearing the quarantine attribute on its own is not
+enough on current macOS:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/ScanPro Integration Example.app"
 ```
+
+The Windows build is unsigned too, but there SmartScreen only warns — click **More info** >
+**Run anyway**.
 
 **Releases.** Pushing a `v*` tag builds both targets and attaches them to a GitHub Release under
 that tag (`.github/workflows/release.yml`). The tag sets the version the app reports, so `v0.3.0`

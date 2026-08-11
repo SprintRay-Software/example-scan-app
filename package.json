@@ -29,6 +29,7 @@
       "output": "release",
       "buildResources": "build"
     },
+    "afterPack": "build/after-pack.cjs",
     "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
     "files": [
       "electron/**/*",
