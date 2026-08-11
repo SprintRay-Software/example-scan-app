@@ -16,7 +16,7 @@
 第二条路径(见[本机 HTTP 服务](#本机-http-服务127001))。
 
 命令行及其核心为**零依赖**(仅 Node.js ≥ 18 内置能力);Electron 仅作为可选的 `devDependency`,只在
-运行 UI 时才需要。
+运行 UI 时才需要,`electron-builder` 只在打包时才需要。
 
 ## 集成流程
 
@@ -538,6 +538,40 @@ curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
 
 - `0` —— 换取 token 且全部上传成功(或 register/status/unregister 命令完成)
 - `1` —— 参数错误、缺少环境变量、换取 token / 上传失败,或 `serve` 找不到可用端口
+
+## 构建安装包
+
+```sh
+npm run dist:win     # Windows x64 → release/*.exe(NSIS 安装包)
+npm run dist:mac     # macOS arm64 → release/*.dmg + *.zip
+```
+
+每个平台在各自的操作系统上构建。构建目标:
+
+| 目标 | 架构 | 产物 | 支持范围 |
+|---|---|---|---|
+| Windows | x64 | NSIS 安装包(`.exe`),用户级安装,无需管理员权限 | Windows 10 1809 及以上 |
+| macOS | arm64 | `.dmg` 与 `.zip` | Apple 芯片,macOS 12+ |
+
+打包后的应用会自行向系统注册 `openScanPro` scheme;`.env` 优先从可执行文件同级目录读取,其次是用户数据
+目录(UI 的配置面板会显示实际读到的文件路径,字段仍可按次修改)。
+
+构建产物**未签名**。在 macOS 上这意味着 Gatekeeper 会隔离下载到的文件:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/ScanPro Integration Example.app"
+```
+
+**发布。** 推送 `v*` tag 会构建两个目标,并把产物挂到该 tag 对应的 GitHub Release 上
+(`.github/workflows/release.yml`)。tag 决定应用上报的版本号,因此 `v0.3.0` 构建出的应用
+`/status` 会返回 `0.3.0`:
+
+```sh
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+想只构建、不发布,可手动运行该工作流(**Actions → release → Run workflow**),安装包会作为
+workflow artifact 产出。
 
 ## 各 TreatmentType 的提交上传文件
 

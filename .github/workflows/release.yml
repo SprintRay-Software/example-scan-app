@@ -1,0 +1,108 @@
+name: release
+
+# Tagging is the release. Push a `v*` tag and this builds both desktop targets and
+# attaches them to a GitHub Release under that tag:
+#
+#   Windows  x64    NSIS installer (.exe)   — Windows 10 1809 and newer
+#   macOS    arm64  .dmg and .zip           — Apple silicon
+#
+# workflow_dispatch runs the same build without a tag, so the pipeline can be exercised
+# without cutting a release (it uploads workflow artifacts and skips the release step).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x64
+            os: windows-latest
+            build_args: --win --x64
+          # macos-14 is the Apple-silicon runner, so the arm64 build is native.
+          - label: macos-arm64
+            os: macos-14
+            build_args: --mac --arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The tag is the single source of truth for the version, so the built app reports
+      # the same string the release is named after (app.getVersion() feeds /status and
+      # the telemetry batch). No commit is made — this only affects the build.
+      - name: Take the version from the tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Building version $VERSION"
+          npm pkg set version="$VERSION"
+
+      - name: Build
+        shell: bash
+        env:
+          # Unsigned builds: do not let electron-builder hunt for a signing identity.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # Ends up in the telemetry batch as app.build, tying a report to this exact binary.
+          SCANPRO_BUILD: ${{ github.sha }}
+        run: npx electron-builder ${{ matrix.build_args }} --publish never
+
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          # Only the installable outputs; skip blockmaps and the unpacked app directories.
+          find release -maxdepth 1 -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \) \
+            -exec cp {} artifacts/ \;
+          ls -lh artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Attach the builds to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -lh artifacts
+          # Re-running the workflow on the same tag must replace the assets, not fail.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" artifacts/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --generate-notes
+          fi
