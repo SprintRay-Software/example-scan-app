@@ -5,15 +5,20 @@
 // forwards every event (steps, decoded payload, full HTTP request/response, progress)
 // to the window. It also registers the app as the OS handler for the launch URL scheme,
 // so clicking "OR Scan" in the browser can open this app directly with the deep link.
+//
+// On startup it additionally brings up the ScanPro local HTTP service on 127.0.0.1
+// (src/local-server) — the second way the web app can reach a desktop scanner. Both
+// transports carry the same base64 launch payload and land in the same UI.
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 
-import { normalizeBaseUrl } from '../src/config.js';
+import { normalizeBaseUrl, loadLocalServerConfig } from '../src/config.js';
 import { runFlow, decodeLaunch } from '../src/core/flow.js';
 import { createReporter } from '../src/core/reporter.js';
+import { startScanProLocalServer, summarizeArgument } from '../src/local-server/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SIM_DIR = resolve(__dirname, '..');
@@ -66,8 +71,9 @@ function defaults() {
 // Window
 // ---------------------------------------------------------------------------
 let mainWindow = null;
-// A deep link may arrive before the window/renderer is ready; hold the latest one.
-let pendingDeepLink = null;
+// A launch may arrive before the window/renderer is ready; hold the latest one.
+// Shape: { url, source } — source is 'os' (URL scheme) or 'local-server' (POST /start).
+let pendingLaunch = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -88,9 +94,10 @@ function createWindow() {
   mainWindow.loadFile(join(__dirname, 'renderer', 'index.html'));
 
   mainWindow.webContents.on('did-finish-load', () => {
-    if (pendingDeepLink) {
-      mainWindow.webContents.send('deeplink', pendingDeepLink);
-      pendingDeepLink = null;
+    mainWindow.webContents.send('localserver:state', localServerState);
+    if (pendingLaunch) {
+      mainWindow.webContents.send('launch', pendingLaunch);
+      pendingLaunch = null;
     }
   });
 
@@ -102,16 +109,17 @@ function createWindow() {
 }
 
 // ---------------------------------------------------------------------------
-// Deep-link handling (openScanPro://<base64>)
+// Launch handling — the OS URL scheme (openScanPro://<base64>) and the local
+// service's POST /start both end here, since they carry the same payload.
 // ---------------------------------------------------------------------------
-function deliverDeepLink(url) {
+function deliverLaunch(url, source = 'os') {
   if (!url) return;
-  if (mainWindow && !mainWindow.webContents.isLoading()) {
-    mainWindow.webContents.send('deeplink', url);
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.send('launch', { url, source });
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   } else {
-    pendingDeepLink = url;
+    pendingLaunch = { url, source };
   }
 }
 
@@ -126,13 +134,13 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', (_event, argv) => {
-    deliverDeepLink(deepLinkFromArgv(argv));
+    deliverLaunch(deepLinkFromArgv(argv));
   });
 
   // macOS delivers the scheme via open-url.
   app.on('open-url', (event, url) => {
     event.preventDefault();
-    deliverDeepLink(url);
+    deliverLaunch(url);
   });
 
   app.whenReady().then(() => {
@@ -150,8 +158,12 @@ if (!gotLock) {
     // First-launch deep link on Windows/Linux arrives in the initial argv.
     if (process.platform !== 'darwin') {
       const initial = deepLinkFromArgv(process.argv);
-      if (initial) pendingDeepLink = initial;
+      if (initial) pendingLaunch = { url: initial, source: 'os' };
     }
+
+    // The local service comes up alongside the window, never in front of it: a failure to
+    // bind must not keep the app from starting, so this is deliberately not awaited.
+    startLocalService();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -163,10 +175,99 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+app.on('before-quit', () => {
+  localServer?.close().catch(() => {});
+  localServer = null;
+});
+
+// ---------------------------------------------------------------------------
+// Local HTTP service (127.0.0.1) — the transport the web app probes when it does not
+// want to go through the OS URL scheme. Here the Electron app itself plays ScanPro, so
+// /status reports this app's state and /start focuses the window with the payload loaded.
+// ---------------------------------------------------------------------------
+let localServer = null;
+let localServerState = { enabled: true, status: 'starting' };
+
+function setLocalServerState(next) {
+  localServerState = next;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('localserver:state', localServerState);
+  }
+}
+
+function localServiceLog(msg) {
+  console.log(`[local-server] ${msg}`);
+}
+
+const scanProService = {
+  // The example app IS the "installed ScanPro" here; it is running whenever a window exists.
+  getStatus: () => ({
+    installed: true,
+    running: BrowserWindow.getAllWindows().length > 0,
+    version: app.getVersion(),
+  }),
+
+  async start({ argument, decoded }) {
+    localServiceLog(`/start — ${summarizeArgument(decoded)}`);
+    // "Starting ScanPro" for this app means: have a window, bring it forward, hand it the
+    // payload. The response goes back only after that is done, which is the blocking
+    // behaviour the contract describes.
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    deliverLaunch(`${URL_SCHEME}://${argument}`, 'local-server');
+    return { started: true };
+  },
+};
+
+async function startLocalService() {
+  const options = loadLocalServerConfig(
+    { ...process.env, ...ENV },
+    {
+      appVersion: app.getVersion(),
+      installPath: SIM_DIR,
+      stateDir: app.getPath('userData'),
+    }
+  );
+
+  if (!options.enabled) {
+    localServiceLog('disabled by SCANPRO_LOCAL_SERVER=0');
+    setLocalServerState({ enabled: false, status: 'disabled' });
+    return;
+  }
+
+  const result = await startScanProLocalServer({
+    service: scanProService,
+    options,
+    log: localServiceLog,
+  });
+
+  if (result.ok) {
+    localServer = result;
+    localServiceLog(`listening on ${result.url}`);
+    setLocalServerState({
+      enabled: true,
+      status: 'listening',
+      port: result.port,
+      url: result.url,
+      endpoints: result.endpoints,
+    });
+  } else {
+    setLocalServerState({
+      enabled: true,
+      status: 'failed',
+      error: result.error.message,
+      portRangeStart: options.portRangeStart,
+      portRangeEnd: options.portRangeEnd,
+      telemetrySent: Boolean(result.telemetry?.ok),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
 ipcMain.handle('defaults:get', () => defaults());
+
+ipcMain.handle('localserver:get', () => localServerState);
 
 ipcMain.handle('scheme:status', () => ({
   scheme: URL_SCHEME,

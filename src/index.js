@@ -7,9 +7,11 @@
 //   A) node src/index.js "openScanPro://<base64_json>"          (handle a launch URL)
 //   B) node src/index.js --code <c> --base-url <u> [--treatment-id <guid>]
 //   C) node src/index.js register|unregister|status [--scheme <s>] [--env-file <p>] [--headless]
+//   D) node src/index.js serve [--port-start <n>] [--run-flow] ...
 //
 // Forms A/B run the device-login + upload flow. Form C registers this simulator as the
-// OS handler for the scanner's URL scheme, so the browser can launch it for real.
+// OS handler for the scanner's URL scheme, so the browser can launch it for real. Form D
+// runs the local HTTP service the web app probes on 127.0.0.1 (the other launch transport).
 //
 // Optional (A/B): --demo-refresh  (also exercises the token refresh endpoint)
 //
@@ -24,6 +26,7 @@ import { fail } from './log.js';
 import { runFlow } from './core/flow.js';
 import { createConsoleReporter } from './core/console-reporter.js';
 import { SCHEME_COMMANDS, runSchemeCommand } from './scheme-cli.js';
+import { SERVE_COMMANDS, SERVE_USAGE, runServeCommand } from './serve-cli.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = resolve(__dirname, '..', 'fixtures');
@@ -42,6 +45,10 @@ Usage:
     node src/index.js register   [--scheme <s>] [--env-file <p>] [--headless]
     node src/index.js status     [--scheme <s>]
     node src/index.js unregister [--scheme <s>]
+
+  Form D (run the local HTTP service on 127.0.0.1 that the web app probes —
+          the second launch transport, alongside the URL scheme):
+${SERVE_USAGE.split('\n').slice(1).join('\n')}
 
 Options:
     --code <code>          device-login code to exchange (Form B)
@@ -111,6 +118,12 @@ async function main() {
   // Form C: OS URL-scheme registration subcommands run and exit before the scan flow.
   if (SCHEME_COMMANDS.has(argv[0])) {
     const code = await runSchemeCommand(argv[0], argv.slice(1), process.env);
+    process.exit(code);
+  }
+
+  // Form D: the local HTTP service. Runs until interrupted.
+  if (SERVE_COMMANDS.has(argv[0])) {
+    const code = await runServeCommand(argv.slice(1), process.env);
     process.exit(code);
   }
 

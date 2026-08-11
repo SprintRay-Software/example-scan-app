@@ -339,6 +339,36 @@ function updateSchemeChip(s) {
   chip.className = 'chip ' + (s.isDefault ? 'chip-ok' : 'chip-warn');
 }
 
+// The local HTTP service the web app probes on 127.0.0.1 — the other launch transport.
+function updateServerChip(state) {
+  const chip = $('server-chip');
+  if (!state || state.status === 'starting') {
+    chip.textContent = 'server: starting...';
+    chip.className = 'chip chip-muted';
+    chip.title = 'Local HTTP service on 127.0.0.1';
+    return;
+  }
+  if (state.status === 'disabled') {
+    chip.textContent = 'server: off';
+    chip.className = 'chip chip-muted';
+    chip.title = 'Local HTTP service disabled (SCANPRO_LOCAL_SERVER=0)';
+    return;
+  }
+  if (state.status === 'listening') {
+    chip.textContent = `server: 127.0.0.1:${state.port}`;
+    chip.className = 'chip chip-ok';
+    chip.title = (state.endpoints || []).join('\n');
+    return;
+  }
+  chip.textContent = 'server: failed';
+  chip.className = 'chip chip-warn';
+  chip.title =
+    `No free port in ${state.portRangeStart}-${state.portRangeEnd}. ` +
+    (state.telemetrySent
+      ? 'local_server.port_unavailable was reported.'
+      : 'Telemetry not sent (endpoint/key not configured).');
+}
+
 // ---------------- init ----------------
 (async function init() {
   const d = await window.scanpro.getDefaults();
@@ -351,10 +381,18 @@ function updateSchemeChip(s) {
   const s = await window.scanpro.getSchemeStatus();
   updateSchemeChip(s);
 
-  window.scanpro.onDeepLink((url) => {
+  window.scanpro.onLocalServerState(updateServerChip);
+  updateServerChip(await window.scanpro.getLocalServerState());
+
+  window.scanpro.onLaunch(({ url, source }) => {
     setMode('url');
     $('in-launch-url').value = url;
-    logLine('info', 'Received deep link from the OS.');
+    logLine(
+      'info',
+      source === 'local-server'
+        ? 'Received a launch payload from the local HTTP service (POST /scanpro/v1/start).'
+        : 'Received deep link from the OS.'
+    );
     decodeOnly();
   });
 })();

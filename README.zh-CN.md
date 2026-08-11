@@ -12,6 +12,9 @@
   [桌面 UI](#桌面-uielectron));
 - **命令行运行器** —— `npm start` —— 同一套流程,输出到控制台。
 
+两个前端还都会提供 **`127.0.0.1` 上的本机 HTTP 服务** —— 除 URL scheme 之外,Web 端触达桌面扫描仪的
+第二条路径(见[本机 HTTP 服务](#本机-http-服务127001))。
+
 命令行及其核心为**零依赖**(仅 Node.js ≥ 18 内置能力);Electron 仅作为可选的 `devDependency`,只在
 运行 UI 时才需要。
 
@@ -21,6 +24,7 @@
 
 1. **拉起。** 在 treatment 页面,SprintRay Web 端通过你注册的自定义 URL scheme 拉起你的应用,
    并带上一段 base64 编码的 JSON —— `yourscheme://<base64_json>` —— 其中只含一个**一次性、短时效的 `code`**。
+   (同一份 payload 也可以改为经[本机 HTTP 服务](#本机-http-服务127001)送达,前提是你的应用运行了该服务。)
 2. **解码。** 对 payload 做 base64 解码,读取 `code`、token 接口路径,以及 treatment / case 标识
    (见[启动 payload](#启动-payload))。
 3. **换取 token。** 通过 HTTPS 把 `code` + 你的客户端凭据 POST 上去,换取已登录医生的 `access_token`。
@@ -308,6 +312,8 @@ payload 与上传调用中用到的数值枚举。
 | Client ID | `SCANPRO_CLIENT_ID` | 你集成的公开 id |
 | Client Secret | `SCANPRO_CLIENT_SECRET` | 仅保存在服务端 / 你的应用内 |
 | URL scheme | `SCANPRO_URL_SCHEME` | 你的应用注册的 scheme,如 `openScanPro` |
+| 遥测接口地址 | `SCANPRO_TELEMETRY_URL` | 仅用于端口耗尽事件;按环境下发 |
+| 遥测 API key | `SCANPRO_TELEMETRY_API_KEY` | 遥测接口唯一的凭据 |
 
 ## 运行示例应用
 
@@ -379,10 +385,159 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 **每个后端请求与响应都会被完整打印**(方法、URL、请求头、请求体 / 状态码、响应头、响应体),
 让你清楚地看到该发送什么、该期望什么。把 `fixtures/` 里的文件替换成你自己的扫描件即可测试其它数据。
 
+## 本机 HTTP 服务(`127.0.0.1`)
+
+Web 端触达桌面应用的**第二条路径**。不走系统 URL scheme,而是由浏览器在回环地址上探测一个固定端口
+区间,找到常驻服务后把 payload POST 过去。两条路径携带的是**同一份** base64 JSON payload,在本示例
+应用里也都落到同一个窗口。
+
+本应用实现了该契约的服务端,你可以把 Web 端直接指过来,看到调用方真实看到的一切 —— 尤其是 CORS 行为,
+浏览器访问回环地址的集成通常就断在这里。
+
+桌面 UI 启动时会自动拉起该服务,右上角 **server** 芯片显示它占用的端口(悬停可看接口列表)。
+不带 Electron 单独运行:
+
+```sh
+npm run serve                  # 占用端口,提供 /status 与 /start
+npm run serve -- --run-flow    # 并且在 /start 时真正换取 token 并上传扫描文件
+npm run serve -- --help        # 全部选项:端口区间、上报的版本/状态、Host 校验开关
+```
+
+### 服务发现
+
+**没有固定端口** —— 服务取第一个能监听成功的端口,因此调用方必须探测。两侧必须对齐同一个区间:
+
+| | |
+|---|---|
+| 端口区间 | `29083`–`29183`(含),共 101 个 |
+| 选取方式 | 启动时从 `29083` 起逐个尝试,第一个能监听的即为所用 |
+| 监听地址 | 仅 `127.0.0.1`,不监听外部网卡 |
+| 区间耗尽 | **不启动** HTTP Server,改为上报遥测(见下) |
+
+**调用方的探测约定:** 从 `29083` 起逐个端口调用 `GET /scanpro/v1/status`,第一个返回 `200` 且响应体中
+`"service": "SprintRayScanService"` 的端口即为本服务。命中后**缓存该端口**并复用,仅在请求失败时重新探测。
+
+> 用 `service` 判定很重要。只凭响应里有没有 `version` 字段,无法把本服务和恰好占用该端口的其它程序区分开。
+
+### `GET /scanpro/v1/status`
+
+安装状态、运行状态与版本一次返回,不需要分两次探测。
+
+```console
+$ curl -s http://127.0.0.1:29083/scanpro/v1/status
+{"service":"SprintRayScanService","running":true,"installed":true,"version":"0.2.0"}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `service` | string | 恒为 `SprintRayScanService` —— 服务发现的判据 |
+| `running` | bool | ScanPro 正在运行 |
+| `installed` | bool | ScanPro 已安装 |
+| `version` | string | ScanPro 版本号 |
+
+### `POST /scanpro/v1/start`
+
+用一份启动 payload 拉起 ScanPro。**这是同步阻塞接口** —— 请求会一直挂起到启动成功或失败为止,请设置足够
+长的超时;并且超时后**不要**直接重试,先用 `/status` 确认 ScanPro 是不是其实已经起来了。
+
+`argument` 是 **Base64 编码后的 JSON** 启动 payload —— 和 URL scheme 携带的是同一份。必填,且不能为空字符串。
+
+```sh
+ARGUMENT=$(node -e 'console.log(Buffer.from(JSON.stringify({
+  caller: { name: "SprintRay", version: "1.0.10.0" },
+  case:   { name: "Jane Doe", ID: "04024e3b-ff28-4d6a-bdea-4c777e4cfb0d" },
+  language: "en_US", serverType: 0, toothSystem: "fdi",
+  treatment: { teeth: [{ number: "17", workType: "Crown" }] }
+})).toString("base64"))')
+
+curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
+  -H 'Content-Type: application/json' \
+  -d "{\"argument\":\"$ARGUMENT\"}"
+```
+
+```json
+{ "status": true, "started": true }
+```
+
+`status` 是契约当前定义的字段;`started` 是同一个值的更清晰命名,两者一起返回,按哪个读都行。启动失败时
+会额外带上 `errorCode` 与 `message`。
+
+如果 payload 里同时带了 SprintRay 的 `auth` 块,这就是一次完整的启动:桌面 UI 会把窗口切到前台并展示解码
+后的 payload;`serve --run-flow` 下,示例应用会先换取 token、上传扫描文件,再返回这个请求。
+
+### 错误
+
+`200` 只代表**请求被正确处理**,不代表业务成功 —— "ScanPro 未安装"同样是 `200`,由 `installed: false`
+表达。真正的错误用状态码 + 固定信封表达:
+
+```json
+{ "error": { "code": "ARGUMENT_REQUIRED", "message": "`argument` is required and must be a non-empty string" } }
+```
+
+| 状态码 | `code` | 触发条件 |
+|---|---|---|
+| `400` | `INVALID_JSON` | 请求体不是合法 JSON |
+| `400` | `ARGUMENT_REQUIRED` | `argument` 缺失、不是字符串,或为空 |
+| `400` | `ARGUMENT_NOT_BASE64_JSON` | `argument` 解不出 JSON 对象 |
+| `403` | `HOST_NOT_ALLOWED` | `Host` 头不是回环名称(见下) |
+| `404` | `NOT_FOUND` | 路径不存在 |
+| `405` | `METHOD_NOT_ALLOWED` | 路径对、方法不对 |
+| `413` | `PAYLOAD_TOO_LARGE` | 请求体超过 256 KB |
+| `500` | `START_ERROR` / `STATUS_ERROR` | 服务自身出错 |
+
+`code` 是稳定常量 —— 请对它做分支,不要对 `message` 做分支。
+
+### CORS 与 Chrome 的 Private Network Access
+
+调用方是 HTTPS 页面访问 `http://127.0.0.1`,属于跨源。缺了正确的响应头,请求即使成功,浏览器也会把响应
+丢掉。因此本服务:
+
+- 把请求的 `Origin` 回显到 `Access-Control-Allow-Origin`,并始终返回 `Vary: Origin`;
+- 对 `OPTIONS` 预检返回允许的方法与请求头;
+- 对带 `Access-Control-Request-Private-Network: true` 的预检返回
+  `Access-Control-Allow-Private-Network: true` —— **缺这一条 Chrome 会直接拦掉**。
+
+默认回显任意 Origin,这样最便于联调。把 `SCANPRO_LOCAL_SERVER_ORIGINS` 设为逗号分隔的列表即可改成白名单,
+名单外的来源拿不到 `Access-Control-Allow-Origin`,浏览器会拦截。
+
+本服务无鉴权,安全性完全依赖"只能从回环访问"。而这个前提只在请求确实是发往回环时才成立,所以 `Host` 头
+为其它名称的请求 —— 也就是 DNS rebinding 攻击的形态 —— 会被 `403` 拒绝。调试代理时可用 `--allow-any-host`
+关掉该校验。
+
+### 端口区间被占满时
+
+101 个端口全被占用时服务不会启动,Web 端探测不到任何端口,在医生看来就只是"点击扫描没反应"。这台机器上
+没有任何人会察觉,所以必须由服务自己上报:
+
+| | |
+|---|---|
+| `eventName` | `local_server.port_unavailable` |
+| `severity` | `error` |
+| `eventData` | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
+
+批次中 `app.name` 填 `ScanPro`,不带 `userId`(服务在任何人登录之前就已启动,填占位值比不填更糟),
+也不带 `scanner`。只有同时配置了 `SCANPRO_TELEMETRY_URL` 与 `SCANPRO_TELEMETRY_API_KEY` 才会发送,
+否则只记本地日志。`deviceId` 是操作系统机器标识的 SHA-256,`installationId` 生成一次后落盘,
+两者都存放在 `~/.sprintray-scanpro-example/`(打包版则在应用的用户数据目录)。
+
+### 相对文档契约的增补
+
+四处增补,均向后兼容 —— 客户端忽略它们也能正常工作:
+
+| 增补 | 原因 |
+|---|---|
+| `/status` 增加 `service` | 端口探测时,仅凭 `version` 无法确认这是不是本服务 |
+| 4xx/5xx 统一为 `{ error: { code, message } }` | 契约只定义了成功响应;`code` 是稳定常量,不是本地化文案 |
+| `status` 之外并列返回 `started` | `/status` 用的是语义化命名(`running` / `installed`),`/start` 返回泛化的 `status` 读起来不一致 |
+| 回环 `Host` 校验 | 否则一个无鉴权的回环服务会信任任何解析到 `127.0.0.1` 的域名 |
+
+有一处行为是刻意不同的:真实服务会把 `argument` 原样交给 ScanPro,而本服务会解码它,解不开就直接返回
+`400`。这正是模拟器的价值 —— 让你在这里就发现 payload 有问题,而不是盯着一个毫无反应的扫描仪。
+
 ## 退出码
 
 - `0` —— 换取 token 且全部上传成功(或 register/status/unregister 命令完成)
-- `1` —— 参数错误、缺少环境变量,或换取 token / 上传失败
+- `1` —— 参数错误、缺少环境变量、换取 token / 上传失败,或 `serve` 找不到可用端口
 
 ## 各 TreatmentType 的提交上传文件
 
