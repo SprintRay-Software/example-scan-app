@@ -398,10 +398,20 @@ Web 端触达桌面应用的**第二条路径**。不走系统 URL scheme,而是
 不带 Electron 单独运行:
 
 ```sh
-npm run serve                  # 占用端口,提供 /status 与 /start
-npm run serve -- --run-flow    # 并且在 /start 时真正换取 token 并上传扫描文件
+npm run serve                  # 占用端口;/start 通过 URL scheme 拉起桌面应用
+npm run serve -- --run-flow    # /start 改为在进程内换取 token 并上传扫描文件
 npm run serve -- --help        # 全部选项:端口区间、上报的版本/状态、Host 校验开关
 ```
+
+无头模式下,`/start` 会像真实的常驻服务那样拉起应用 —— 把 payload 交给该 URL scheme 的系统处理器,
+于是 `npm run register` 注册的、或已安装的构建就是被拉起的那个。拉起之后还会**做确认**:启动器返回 0 只
+代表系统受理了请求,一个启动后立刻退出的陈旧处理器本来会被当成成功,所以响应里报的是实际结果:
+
+| `errorCode` | 含义 |
+|---|---|
+| `NO_HANDLER_REGISTERED` | 没有程序认领该 scheme —— 安装一个构建,或执行 `npm run register` |
+| `LAUNCH_NOT_CONFIRMED` | 系统受理了启动,但没有进程活下来(通常是陈旧的处理器) |
+| `LAUNCH_FAILED` | 系统启动器本身报错 |
 
 ### 服务发现
 
@@ -556,11 +566,39 @@ npm run dist:mac     # macOS arm64 → release/*.dmg + *.zip
 打包后的应用会自行向系统注册 `openScanPro` scheme;`.env` 优先从可执行文件同级目录读取,其次是用户数据
 目录(UI 的配置面板会显示实际读到的文件路径,字段仍可按次修改)。
 
-构建产物**未签名**。在 macOS 上这意味着 Gatekeeper 会隔离下载到的文件:
+### 签名(macOS 上是必需项,不是可选项)
+
+没有 Developer ID 证书时,macOS 构建产物只有 **ad-hoc 签名**,而 macOS 15 及以上的 Gatekeeper 会
+**直接拒绝**它。这个失败不给任何线索:应用启动后一秒内就被杀掉,没有弹窗、没有输出 —— 所以从 Finder 打开、
+通过 `openScanPro://` 拉起、以及本机服务的 `/start`,看起来全都是"点了没反应"。而直接在终端里跑那个二进制
+却是正常的,这正是它容易被误判的原因:
+
+```sh
+# 即使应用无法被正常拉起,这样跑依然可以
+"/Applications/ScanPro Integration Example.app/Contents/MacOS/ScanPro Integration Example"
+
+# 看看系统到底怎么判定这个构建
+spctl -a -vvv -t exec "/Applications/ScanPro Integration Example.app"   # -> rejected
+```
+
+要产出测试同学能直接打开的构建,在仓库里配好下面这些 secret,发布流水线会自动完成签名(以及公证):
+
+| Secret | 用途 |
+|---|---|
+| `MAC_CSC_LINK` | Developer ID Application 证书(`.p12`,base64 编码) |
+| `MAC_CSC_KEY_PASSWORD` | 该 `.p12` 的密码 |
+| `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` | 公证(notarization) |
+
+没配也能构建:流水线会打一条 warning,并在 job 日志里打印实际的签名信息与 Gatekeeper 判定结果。
+
+**一定要跑未签名的构建时**,右键点应用 > **打开**,确认一次;或在**系统设置 > 隐私与安全性**里放行。
+在当前版本的 macOS 上,只清除隔离属性已经不够了:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/ScanPro Integration Example.app"
 ```
+
+Windows 构建同样未签名,但那边 SmartScreen 只是告警 —— 点**更多信息** > **仍要运行**即可。
 
 **发布。** 推送 `v*` tag 会构建两个目标,并把产物挂到该 tag 对应的 GitHub Release 上
 (`.github/workflows/release.yml`)。tag 决定应用上报的版本号,因此 `v0.3.0` 构建出的应用

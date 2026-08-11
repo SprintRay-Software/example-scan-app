@@ -91,11 +91,17 @@ function defaults() {
 // Window
 // ---------------------------------------------------------------------------
 let mainWindow = null;
-// A launch may arrive before the window/renderer is ready; hold the latest one.
-// Shape: { url, source } — source is 'os' (URL scheme) or 'local-server' (POST /start).
+// Whether the renderer has finished loading and can receive IPC. Tracked explicitly rather
+// than read off webContents.isLoading(): loadFile() is asynchronous, so immediately after
+// createWindow() the contents are not "loading" yet either, and a launch sent in that window
+// of time reaches a renderer with no listeners and is lost.
+let rendererReady = false;
+// A launch may arrive before the renderer is ready; hold the latest one.
+// Shape: { url, source, resolve } — source is 'os' (URL scheme) or 'local-server' (/start).
 let pendingLaunch = null;
 
 function createWindow() {
+  rendererReady = false;
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 900,
@@ -114,11 +120,22 @@ function createWindow() {
   mainWindow.loadFile(join(__dirname, 'renderer', 'index.html'));
 
   mainWindow.webContents.on('did-finish-load', () => {
+    rendererReady = true;
     mainWindow.webContents.send('localserver:state', localServerState);
-    if (pendingLaunch) {
-      mainWindow.webContents.send('launch', pendingLaunch);
-      pendingLaunch = null;
+
+    const queued = pendingLaunch;
+    pendingLaunch = null;
+    if (queued) {
+      mainWindow.webContents.send('launch', { url: queued.url, source: queued.source });
+      // A launch that had to wait for the window still has to end up in front of the user.
+      revealWindow(mainWindow);
+      queued.resolve(true);
     }
+  });
+
+  mainWindow.on('closed', () => {
+    rendererReady = false;
+    mainWindow = null;
   });
 
   // Open external links in the OS browser, not inside the app.
@@ -132,15 +149,63 @@ function createWindow() {
 // Launch handling — the OS URL scheme (openScanPro://<base64>) and the local
 // service's POST /start both end here, since they carry the same payload.
 // ---------------------------------------------------------------------------
-function deliverLaunch(url, source = 'os') {
-  if (!url) return;
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
-    mainWindow.webContents.send('launch', { url, source });
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  } else {
-    pendingLaunch = { url, source };
+
+// Put the window in front of whatever the user is looking at.
+//
+// `win.focus()` on its own is not enough, and the gap is invisible in testing because it only
+// shows up when the app is NOT the frontmost one — exactly the situation a launch arrives in.
+// On macOS a background app has to activate itself first, otherwise the window is raised only
+// within that app and stays behind the frontmost one; with every window closed the app is also
+// off the dock's active state. On Windows the OS refuses a focus steal from a background
+// process and just flashes the taskbar button, so the window has to be raised explicitly.
+function revealWindow(win) {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  if (!win.isVisible()) win.show();
+  if (process.platform === 'darwin') {
+    app.dock?.show();
+    app.focus({ steal: true });
   }
+  win.moveTop();
+  win.focus();
+}
+
+// How long a launch waits for a freshly created window to finish loading before it is
+// reported as failed. /start blocks on this, so it needs a bound.
+const LAUNCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Hand a launch payload to the window, creating and revealing it as needed.
+ * @returns {Promise<boolean>} true once the renderer has actually received it
+ */
+function deliverLaunch(url, source = 'os') {
+  if (!url) return Promise.resolve(false);
+
+  if (mainWindow && rendererReady) {
+    mainWindow.webContents.send('launch', { url, source });
+    revealWindow(mainWindow);
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (pendingLaunch?.resolve === settle) pendingLaunch = null;
+      resolve(false);
+    }, LAUNCH_TIMEOUT_MS);
+
+    function settle(ok) {
+      clearTimeout(timer);
+      resolve(ok);
+    }
+
+    pendingLaunch = { url, source, resolve: settle };
+    // Only build the window once Electron is ready. A cold launch through the URL scheme
+    // delivers open-url BEFORE whenReady on macOS, and constructing a BrowserWindow at that
+    // point throws and takes the process down — the app dies on the very launch it was
+    // started for. When it is not ready yet, whenReady creates the window and did-finish-load
+    // flushes this queued launch.
+    if (app.isReady() && !mainWindow) createWindow();
+  });
 }
 
 // Pull the first custom-scheme URL out of a process argv (Windows/Linux launch path).
@@ -149,7 +214,19 @@ function deepLinkFromArgv(argv) {
 }
 
 // Single-instance: a second launch (e.g. the OS opening the scheme) forwards its argv here.
-const gotLock = app.requestSingleInstanceLock();
+//
+// Not on macOS. There, requestSingleInstanceLock() validates code signatures, and for a build
+// that is not signed with a Developer ID it cannot read the task port of the launching process
+// when that process is launchd:
+//
+//   ERROR:electron/shell/common/mac/codesign_util.cc:79] task_name_for_pid: (os/kern) failure (5)
+//
+// The call then returns false, the app takes itself for a second instance and quits — so every
+// launch from Finder, from the URL scheme, or from the local service's /start dies within a
+// second, while running the binary from a terminal (parent = the shell) works fine. The lock
+// buys nothing here anyway: LaunchServices already keeps one instance per bundle and delivers
+// a repeat launch to it as open-url.
+const gotLock = process.platform === 'darwin' || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
@@ -229,11 +306,18 @@ const scanProService = {
 
   async start({ argument, decoded }) {
     localServiceLog(`/start — ${summarizeArgument(decoded)}`);
-    // "Starting ScanPro" for this app means: have a window, bring it forward, hand it the
-    // payload. The response goes back only after that is done, which is the blocking
-    // behaviour the contract describes.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    deliverLaunch(`${URL_SCHEME}://${argument}`, 'local-server');
+    // "Starting ScanPro" for this app means: have a window, put it in front of the user, and
+    // hand it the payload. Awaiting that is what makes the response honest — the contract's
+    // blocking /start must not answer `true` while nothing has appeared on screen.
+    const started = await deliverLaunch(`${URL_SCHEME}://${argument}`, 'local-server');
+    if (!started) {
+      localServiceLog('/start — window did not become ready in time');
+      return {
+        started: false,
+        errorCode: 'WINDOW_NOT_READY',
+        message: `the app window did not finish loading within ${LAUNCH_TIMEOUT_MS} ms`,
+      };
+    }
     return { started: true };
   },
 };

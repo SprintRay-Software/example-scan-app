@@ -27,10 +27,12 @@ jobs:
       matrix:
         include:
           - label: windows-x64
+            platform: win
             os: windows-latest
             build_args: --win --x64
           # macos-14 is the Apple-silicon runner, so the arm64 build is native.
           - label: macos-arm64
+            platform: mac
             os: macos-14
             build_args: --mac --arm64
 
@@ -56,14 +58,46 @@ jobs:
           echo "Building version $VERSION"
           npm pkg set version="$VERSION"
 
+      # Signing is opt-in through repository secrets. Without them the macOS build is only
+      # ad-hoc signed, and Gatekeeper on macOS 15+ rejects that on any Finder / URL-scheme /
+      # local-service launch — the app starts and is killed within a second. Add
+      # MAC_CSC_LINK + MAC_CSC_KEY_PASSWORD (a Developer ID .p12, base64) to sign, and
+      # APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID to also notarize.
+      - name: Detect macOS signing secrets
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.MAC_CSC_LINK }}" ]; then
+            echo "MAC_SIGNING=1" >> "$GITHUB_ENV"
+            echo "Developer ID certificate present — the build will be signed"
+          else
+            echo "MAC_SIGNING=0" >> "$GITHUB_ENV"
+            echo "::warning::No MAC_CSC_LINK secret; the macOS build is ad-hoc signed only and Gatekeeper will refuse to launch it. See the README."
+          fi
+
       - name: Build
         shell: bash
         env:
-          # Unsigned builds: do not let electron-builder hunt for a signing identity.
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # With a certificate present, let electron-builder use it; otherwise stop it hunting
+          # for an identity that is not there.
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.MAC_SIGNING == '1' }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           # Ends up in the telemetry batch as app.build, tying a report to this exact binary.
           SCANPRO_BUILD: ${{ github.sha }}
         run: npx electron-builder ${{ matrix.build_args }} --publish never
+
+      - name: Report the macOS signing result
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          APP=$(find release -maxdepth 2 -name '*.app' -type d | head -1)
+          [ -z "$APP" ] && exit 0
+          echo "Signature:"; codesign -dv "$APP" 2>&1 | grep -E 'Identifier|Signature|TeamIdentifier' || true
+          echo "Gatekeeper:"; spctl -a -vvv -t exec "$APP" 2>&1 | head -3 || true
 
       - name: Collect installers
         shell: bash

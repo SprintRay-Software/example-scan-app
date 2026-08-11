@@ -242,6 +242,26 @@ window.scanpro.onFlowEvent(({ type, payload }) => {
   }
 });
 
+// ---------------- launches (URL scheme or the local HTTP service) ----------------
+function handleLaunch({ url, source }) {
+  setMode('url');
+  $('in-launch-url').value = url;
+  logLine(
+    'info',
+    source === 'local-server'
+      ? 'Received a launch payload from the local HTTP service (POST /scanpro/v1/start).'
+      : 'Received deep link from the OS.'
+  );
+  decodeOnly();
+}
+
+// Subscribe at top level, NOT from init(). The main process pushes a queued launch and the
+// local-server state the moment the page finishes loading; init() is async and only reaches
+// its first line after several IPC round-trips, so a listener registered there is too late
+// and the launch is delivered to nobody.
+window.scanpro.onLaunch(handleLaunch);
+window.scanpro.onLocalServerState(updateServerChip);
+
 // ---------------- run / decode ----------------
 function currentConfig() {
   return {
@@ -381,18 +401,7 @@ function updateServerChip(state) {
   const s = await window.scanpro.getSchemeStatus();
   updateSchemeChip(s);
 
-  window.scanpro.onLocalServerState(updateServerChip);
+  // The push subscription is set up at top level; this is the initial pull for the case where
+  // the service bound its port before this window existed.
   updateServerChip(await window.scanpro.getLocalServerState());
-
-  window.scanpro.onLaunch(({ url, source }) => {
-    setMode('url');
-    $('in-launch-url').value = url;
-    logLine(
-      'info',
-      source === 'local-server'
-        ? 'Received a launch payload from the local HTTP service (POST /scanpro/v1/start).'
-        : 'Received deep link from the OS.'
-    );
-    decodeOnly();
-  });
 })();
