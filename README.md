@@ -80,7 +80,7 @@ sequenceDiagram
   "toothSystem": "fdi",
   "auth": {
     "code": "<one-time-code>",
-    "tokenEndpoint": "/api/integration/device-login-token",
+    "tokenEndpoint": "/integration/device-login-token",
     "expiresIn": 600
   },
   "treatmentId": "<treatment id>",
@@ -109,19 +109,31 @@ sequenceDiagram
 
 ## API contract
 
-Two calls. `{ORIGIN}` is the fixed SprintRay backend origin for your environment (no `/api`
-suffix; the paths already include it):
+Two calls. Both go through the SprintRay API gateway; `{ORIGIN}` is the fixed gateway origin for
+your environment:
 
 | Environment | `{ORIGIN}` |
 |---|---|
-| production | `https://dashboard.sprintray.com` |
+| development | `https://dev-apx.sprintray.com` |
+| staging | `https://staging-apx.sprintray.com` |
+| production | `https://apx.sprintray.com` |
 
 SprintRay provides the origin for your target environment.
+
+**Both calls must carry `x-api-key`** — the gateway API key SprintRay issues for your integration
+(a different thing from the client id / client secret: the API key identifies the caller and
+selects its usage plan, the client credentials exchange the code for the doctor's token). Without
+it the gateway rejects the request with `403` before it reaches the SprintRay backend.
+
+> Gateway paths carry **no** `/api` prefix. Always build the token call from the launch payload's
+> `auth.tokenEndpoint` instead of hardcoding a path — that field is there so SprintRay can change
+> the route without a change in your app.
 
 ### 1. Exchange the code for a token
 
 ```http
 POST {ORIGIN}{auth.tokenEndpoint}
+x-api-key: <your-api-key>
 Content-Type: application/json
 
 { "code": "<code>", "clientId": "<your-client-id>", "clientSecret": "<your-client-secret>" }
@@ -129,14 +141,15 @@ Content-Type: application/json
 
 `200 → { "access_token": "…", "token_type": "Bearer", "expires_in": 86400 }`
 
-Errors: `400` code missing/expired/already used · `401` bad client credentials.
-When the token expires, re-launch to obtain a new one.
+Errors: `400` code missing/expired/already used · `401` bad client credentials · `403` missing or
+invalid `x-api-key`. When the token expires, re-launch to obtain a new one.
 
 ### 2. Get a presigned upload URL, then PUT the file
 
 ```http
-POST {ORIGIN}/api/file/upload
+POST {ORIGIN}/integration/file/upload
 Authorization: Bearer <access_token>
+x-api-key: <your-api-key>
 Content-Type: application/json
 
 { "fileName": "upper.stl", "fileSize": 3083734, "treatmentId": "<treatment-id>",
@@ -319,7 +332,8 @@ No enum is defined for this yet; it is currently always the fixed value `0`.
 
 | Value | Env var | Notes |
 |---|---|---|
-| Backend origin | `SCANPRO_BASE_URL` | fixed per environment (dev / staging / prod — see above); no `/api` suffix |
+| Gateway origin | `SCANPRO_BASE_URL` | fixed per environment (dev / staging / prod — see above) |
+| Gateway API key | `SCANPRO_API_KEY` | sent as `x-api-key`; identifies the caller and selects its usage plan |
 | Client id | `SCANPRO_CLIENT_ID` | your integration's public id |
 | Client secret | `SCANPRO_CLIENT_SECRET` | keep server-side / in your app only |
 | URL scheme | `SCANPRO_URL_SCHEME` | the scheme your app registers, e.g. `openScanPro` |
@@ -347,7 +361,7 @@ npm run app               # launch the desktop UI
 
 The window has three parts:
 
-- **Left — Configuration & input.** Backend origin, client id/secret, and URL scheme are prefilled
+- **Left — Configuration & input.** Gateway origin, API key, client id/secret, and URL scheme are prefilled
   from `.env` (editable per run). Paste a `openScanPro://<base64>` **launch URL**, or switch to
   **Manual code** to run with an explicit `code` + treatment id. Optionally pick a custom scan file
   and toggle the token-refresh step.

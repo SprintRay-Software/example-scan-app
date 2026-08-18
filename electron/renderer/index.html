@@ -27,7 +27,14 @@
           <div class="panel-head"><h2>Configuration</h2><span id="env-note" class="hint"></span></div>
           <label class="field">
             <span>Backend origin</span>
-            <input id="cfg-base" type="text" spellcheck="false" placeholder="https://dashboard.sprintray.com" />
+            <input id="cfg-base" type="text" spellcheck="false" placeholder="https://apx.sprintray.com" />
+          </label>
+          <label class="field">
+            <span>API key <em>(x-api-key)</em></span>
+            <span class="secret-row">
+              <input id="cfg-api-key" type="password" spellcheck="false" placeholder="your-gateway-api-key" />
+              <button id="btn-toggle-api-key" class="btn btn-ghost btn-sm" type="button">Show</button>
+            </span>
           </label>
           <label class="field">
             <span>Client ID</span>

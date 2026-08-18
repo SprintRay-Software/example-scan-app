@@ -73,7 +73,7 @@ sequenceDiagram
   "toothSystem": "fdi",
   "auth": {
     "code": "<one-time-code>",
-    "tokenEndpoint": "/api/integration/device-login-token",
+    "tokenEndpoint": "/integration/device-login-token",
     "expiresIn": 600
   },
   "treatmentId": "<treatment id>",
@@ -102,18 +102,28 @@ sequenceDiagram
 
 ## 接口约定
 
-共两个调用。`{ORIGIN}` 为对应环境下固定的 SprintRay 后端 origin(不带 `/api` 后缀,路径本身已含 `/api`):
+共两个调用。两者都经由 SprintRay API 网关,`{ORIGIN}` 为对应环境下固定的网关 origin:
 
 | 环境 | `{ORIGIN}` |
 |---|---|
-| 生产 | `https://dashboard.sprintray.com` |
+| 开发 | `https://dev-apx.sprintray.com` |
+| 预发 | `https://staging-apx.sprintray.com` |
+| 生产 | `https://apx.sprintray.com` |
 
 对应环境的 origin 由 SprintRay 提供。
+
+**两个调用都必须带上 `x-api-key`** —— SprintRay 为你的集成签发的网关 API key(与 client id / client
+secret 是两回事:API key 标识调用方并决定限流额度,client 凭据用于换取医生 token)。缺少该头会在
+请求到达 SprintRay 后端之前被网关以 `403` 拒绝。
+
+> 网关路径**不含** `/api` 前缀。请始终使用启动 payload 中的 `auth.tokenEndpoint` 拼接 token 接口,
+> 不要写死路径 —— 该字段就是为了让 SprintRay 能在不改动你的应用的前提下调整路由。
 
 ### 1. 用 code 换取 token
 
 ```http
 POST {ORIGIN}{auth.tokenEndpoint}
+x-api-key: <your-api-key>
 Content-Type: application/json
 
 { "code": "<code>", "clientId": "<your-client-id>", "clientSecret": "<your-client-secret>" }
@@ -121,13 +131,15 @@ Content-Type: application/json
 
 `200 → { "access_token": "…", "token_type": "Bearer", "expires_in": 86400 }`
 
-错误:`400` code 缺失/过期/已使用 · `401` 客户端凭据错误。token 过期后,重新拉起以获取新 token。
+错误:`400` code 缺失/过期/已使用 · `401` 客户端凭据错误 · `403` 缺少或无效的 `x-api-key`。
+token 过期后,重新拉起以获取新 token。
 
 ### 2. 申请预签名上传 URL,再 PUT 文件
 
 ```http
-POST {ORIGIN}/api/file/upload
+POST {ORIGIN}/integration/file/upload
 Authorization: Bearer <access_token>
+x-api-key: <your-api-key>
 Content-Type: application/json
 
 { "fileName": "upper.stl", "fileSize": 3083734, "treatmentId": "<treatment-id>",
@@ -308,7 +320,8 @@ payload 与上传调用中用到的数值枚举。
 
 | 值 | 环境变量 | 说明 |
 |---|---|---|
-| 后端 origin | `SCANPRO_BASE_URL` | 按环境固定(dev / staging / prod,见上表);不带 `/api` 后缀 |
+| 网关 origin | `SCANPRO_BASE_URL` | 按环境固定(dev / staging / prod,见上表) |
+| 网关 API key | `SCANPRO_API_KEY` | 作为 `x-api-key` 发送;标识调用方并决定限流额度 |
 | Client ID | `SCANPRO_CLIENT_ID` | 你集成的公开 id |
 | Client Secret | `SCANPRO_CLIENT_SECRET` | 仅保存在服务端 / 你的应用内 |
 | URL scheme | `SCANPRO_URL_SCHEME` | 你的应用注册的 scheme,如 `openScanPro` |
@@ -335,7 +348,7 @@ npm run app               # 启动桌面 UI
 
 窗口分三块:
 
-- **左侧 —— 配置与输入。** 后端 origin、client id/secret、URL scheme 会从 `.env` 预填(可按次修改)。
+- **左侧 —— 配置与输入。** 网关 origin、API key、client id/secret、URL scheme 会从 `.env` 预填(可按次修改)。
   粘贴 `openScanPro://<base64>` **启动 URL**,或切到 **Manual code** 用显式 `code` + treatment id 运行;
   还可选择自定义扫描文件、勾选是否额外走 token 刷新步骤。
 - **右侧 —— 观测区。**

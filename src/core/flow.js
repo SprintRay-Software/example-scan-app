@@ -11,7 +11,9 @@ import { parseLaunchUrl, extractFields, TreatmentFileType, fileTypeName } from '
 import { exchangeCodeForTokens, refreshTokens } from '../auth.js';
 import { uploadFixture } from '../upload.js';
 
-export const DEFAULT_TOKEN_PATH = '/api/integration/device-login-token';
+// Fallback only. Form A always takes the path from the launch payload's auth.tokenEndpoint —
+// that field exists so SprintRay can move the route without a desktop-app release.
+export const DEFAULT_TOKEN_PATH = '/integration/device-login-token';
 
 /**
  * Decode a launch URL to its payload + extracted fields, without touching the network.
@@ -28,7 +30,7 @@ export function decodeLaunch(launchUrl) {
  *
  * @param {import('./reporter.js').createReporter} reporter
  * @param {object} opts
- * @param {{ baseUrl: string, clientId: string, clientSecret: string }} opts.config
+ * @param {{ baseUrl: string, apiKey: string, clientId: string, clientSecret: string }} opts.config
  * @param {object} opts.input
  *   Form A: { launchUrl }
  *   Form B: { code, baseUrlOverride?, treatmentId? }
@@ -91,6 +93,7 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
   // 1) Exchange the code for tokens.
   let tokens = await exchangeCodeForTokens(reporter, {
     baseUrl,
+    apiKey: config.apiKey,
     tokenPath,
     code,
     clientId: config.clientId,
@@ -101,6 +104,7 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
   if (input.demoRefresh) {
     tokens = await refreshTokens(reporter, {
       baseUrl,
+      apiKey: config.apiKey,
       refreshToken: tokens.refresh_token,
       clientId: config.clientId,
       clientSecret: config.clientSecret,
@@ -130,6 +134,7 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
   try {
     const r = await uploadFixture(reporter, {
       baseUrl,
+      apiKey: config.apiKey,
       accessToken: tokens.access_token,
       filePath,
       fileName,

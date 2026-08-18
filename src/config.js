@@ -3,22 +3,32 @@
 
 import { fail } from './log.js';
 
-const REQUIRED = ['SCANPRO_BASE_URL', 'SCANPRO_CLIENT_ID', 'SCANPRO_CLIENT_SECRET'];
+const REQUIRED = ['SCANPRO_BASE_URL', 'SCANPRO_API_KEY', 'SCANPRO_CLIENT_ID', 'SCANPRO_CLIENT_SECRET'];
 
 export function loadConfig(env = process.env) {
   const missing = REQUIRED.filter((k) => !env[k] || String(env[k]).trim() === '');
 
   if (missing.length > 0) {
     fail(`Missing required environment variable(s): ${missing.join(', ')}`);
-    fail('Copy .env.example to .env and fill in the values, then run:');
+    if (missing.includes('SCANPRO_API_KEY')) {
+      // Newly required by the move to the SprintRay API gateway, so an .env written before it
+      // has every other value. Name the exact line to add rather than only the variable.
+      fail('SCANPRO_API_KEY is the SprintRay API-gateway key, sent as x-api-key on every call');
+      fail('to SprintRay. Add this line to your .env (SprintRay issues the key for your');
+      fail('integration; it is not the client id or the client secret):');
+      fail('  SCANPRO_API_KEY=your-gateway-api-key');
+    }
+    fail('A full template is in .env.example. Run with:');
     fail('  node --env-file=.env src/index.js ...');
     process.exit(1);
   }
 
   return {
-    // Normalize to an origin: strip a trailing slash and a trailing /api — API paths
-    // already include /api, so the base must be the origin only (avoids a doubled /api).
+    // Normalize to an origin: strip a trailing slash and a trailing /api. Gateway paths do
+    // NOT carry an /api prefix, so the base must be the origin only.
     baseUrl: normalizeBaseUrl(env.SCANPRO_BASE_URL),
+    // Sent as x-api-key on every SprintRay call; the gateway rejects with 403 without it.
+    apiKey: String(env.SCANPRO_API_KEY).trim(),
     clientId: String(env.SCANPRO_CLIENT_ID).trim(),
     clientSecret: String(env.SCANPRO_CLIENT_SECRET).trim(),
   };
