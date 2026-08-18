@@ -106,6 +106,8 @@ sequenceDiagram
 
 | 环境 | `{ORIGIN}` |
 |---|---|
+| 开发 | `https://dev-apx.sprintray.com` |
+| 预发 | `https://staging-apx.sprintray.com` |
 | 生产 | `https://apx.sprintray.com` |
 
 对应环境的 origin 由 SprintRay 提供。
@@ -346,7 +348,7 @@ npm run app               # 启动桌面 UI
 
 窗口分三块:
 
-- **左侧 —— 配置与输入。** 后端 origin、client id/secret、URL scheme 会从 `.env` 预填(可按次修改)。
+- **左侧 —— 配置与输入。** 网关 origin、API key、client id/secret、URL scheme 会从 `.env` 预填(可按次修改)。
   粘贴 `openScanPro://<base64>` **启动 URL**,或切到 **Manual code** 用显式 `code` + treatment id 运行;
   还可选择自定义扫描文件、勾选是否额外走 token 刷新步骤。
 - **右侧 —— 观测区。**

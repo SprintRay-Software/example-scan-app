@@ -114,6 +114,8 @@ your environment:
 
 | Environment | `{ORIGIN}` |
 |---|---|
+| development | `https://dev-apx.sprintray.com` |
+| staging | `https://staging-apx.sprintray.com` |
 | production | `https://apx.sprintray.com` |
 
 SprintRay provides the origin for your target environment.
@@ -359,7 +361,7 @@ npm run app               # launch the desktop UI
 
 The window has three parts:
 
-- **Left — Configuration & input.** Backend origin, client id/secret, and URL scheme are prefilled
+- **Left — Configuration & input.** Gateway origin, API key, client id/secret, and URL scheme are prefilled
   from `.env` (editable per run). Paste a `openScanPro://<base64>` **launch URL**, or switch to
   **Manual code** to run with an explicit `code` + treatment id. Optionally pick a custom scan file
   and toggle the token-refresh step.
