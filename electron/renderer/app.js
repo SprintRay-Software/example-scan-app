@@ -266,6 +266,7 @@ window.scanpro.onLocalServerState(updateServerChip);
 function currentConfig() {
   return {
     baseUrl: $('cfg-base').value.trim(),
+    apiKey: $('cfg-api-key').value.trim(),
     clientId: $('cfg-client-id').value.trim(),
     clientSecret: $('cfg-client-secret').value.trim(),
   };
@@ -295,6 +296,7 @@ async function runFlow() {
   if (mode === 'url' && !input.launchUrl) { logLine('fail', 'Paste a launch URL first.'); return; }
   if (mode === 'manual' && !input.code) { logLine('fail', 'Enter a device-login code first.'); return; }
   if (!cfg.clientId || !cfg.clientSecret) { logLine('fail', 'Client ID and secret are required.'); return; }
+  if (!cfg.apiKey) { logLine('fail', 'API key is required — the gateway rejects a call without x-api-key.'); return; }
 
   resetRunState();
   $('env-chip').textContent = 'origin: ' + cfg.baseUrl.replace(/^https?:\/\//, '');
@@ -336,12 +338,17 @@ $('btn-decode').addEventListener('click', decodeOnly);
 $('btn-clear').addEventListener('click', () => { resetRunState(); logEl.innerHTML = ''; $('payload-body').hidden = true; $('payload-empty').hidden = false; });
 $('btn-log-clear').addEventListener('click', () => (logEl.innerHTML = ''));
 
-$('btn-toggle-secret').addEventListener('click', () => {
-  const inp = $('cfg-client-secret');
-  const show = inp.type === 'password';
-  inp.type = show ? 'text' : 'password';
-  $('btn-toggle-secret').textContent = show ? 'Hide' : 'Show';
-});
+function wireSecretToggle(buttonId, inputId) {
+  $(buttonId).addEventListener('click', () => {
+    const inp = $(inputId);
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    $(buttonId).textContent = show ? 'Hide' : 'Show';
+  });
+}
+
+wireSecretToggle('btn-toggle-secret', 'cfg-client-secret');
+wireSecretToggle('btn-toggle-api-key', 'cfg-api-key');
 
 $('btn-pick').addEventListener('click', async () => {
   const res = await window.scanpro.pickFile();
@@ -393,6 +400,7 @@ function updateServerChip(state) {
 (async function init() {
   const d = await window.scanpro.getDefaults();
   $('cfg-base').value = d.baseUrl;
+  $('cfg-api-key').value = d.apiKey;
   $('cfg-client-id').value = d.clientId;
   $('cfg-client-secret').value = d.clientSecret;
   $('env-chip').textContent = 'origin: ' + (d.baseUrl || '').replace(/^https?:\/\//, '');

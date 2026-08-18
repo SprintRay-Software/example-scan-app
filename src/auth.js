@@ -12,6 +12,8 @@ function describeError(status, context, body) {
       return `${context}: 400 invalid_grant — the code is missing, expired, or already used${snippet}`;
     case 401:
       return `${context}: 401 unauthorized — bad client credentials (clientId/clientSecret)${snippet}`;
+    case 403:
+      return `${context}: 403 forbidden — missing or invalid x-api-key; the API gateway rejected the call before it reached SprintRay (check SCANPRO_API_KEY)${snippet}`;
     case 502:
       return `${context}: 502 bad gateway — upstream identity provider token error${snippet}`;
     default:
@@ -36,12 +38,12 @@ function assertTokens(tokens, context) {
 
 /**
  * Exchange a device-login code for tokens.
- * POST {baseUrl}{tokenPath}  body { code, clientId, clientSecret }
- * tokenPath comes from the launch payload (a path such as /api/integration/device-login-token).
+ * POST {baseUrl}{tokenPath}  x-api-key: <apiKey>  body { code, clientId, clientSecret }
+ * tokenPath comes from the launch payload (a path such as /integration/device-login-token).
  */
-export async function exchangeCodeForTokens(reporter, { baseUrl, tokenPath, code, clientId, clientSecret }) {
+export async function exchangeCodeForTokens(reporter, { baseUrl, apiKey, tokenPath, code, clientId, clientSecret }) {
   const url = joinUrl(baseUrl, tokenPath);
-  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json', 'x-api-key': apiKey };
   const body = { code, clientId, clientSecret };
 
   reporter.phase('exchange', 'active', 'Exchanging device-login code for tokens');
@@ -64,11 +66,12 @@ export async function exchangeCodeForTokens(reporter, { baseUrl, tokenPath, code
 
 /**
  * Refresh tokens (optional demo path).
- * POST {baseUrl}/api/integration/device-login-token/refresh  body { refreshToken, clientId, clientSecret }
+ * POST {baseUrl}/integration/device-login-token/refresh  x-api-key: <apiKey>
+ * body { refreshToken, clientId, clientSecret }
  */
-export async function refreshTokens(reporter, { baseUrl, refreshToken, clientId, clientSecret }) {
-  const url = joinUrl(baseUrl, 'api/integration/device-login-token/refresh');
-  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+export async function refreshTokens(reporter, { baseUrl, apiKey, refreshToken, clientId, clientSecret }) {
+  const url = joinUrl(baseUrl, 'integration/device-login-token/refresh');
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json', 'x-api-key': apiKey };
   const body = { refreshToken, clientId, clientSecret };
 
   reporter.phase('refresh', 'active', 'Refreshing tokens');

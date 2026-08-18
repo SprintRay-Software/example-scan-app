@@ -15,8 +15,8 @@
 //
 // Optional (A/B): --demo-refresh  (also exercises the token refresh endpoint)
 //
-// Env (via `node --env-file=.env`): SCANPRO_BASE_URL, SCANPRO_CLIENT_ID, SCANPRO_CLIENT_SECRET,
-//   and optional SCANPRO_URL_SCHEME (default scheme for `register`).
+// Env (via `node --env-file=.env`): SCANPRO_BASE_URL, SCANPRO_API_KEY, SCANPRO_CLIENT_ID,
+//   SCANPRO_CLIENT_SECRET, and optional SCANPRO_URL_SCHEME (default scheme for `register`).
 
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -62,7 +62,10 @@ Options:
     -h, --help             show this help
 
 Environment (loaded via --env-file=.env):
-    SCANPRO_BASE_URL, SCANPRO_CLIENT_ID, SCANPRO_CLIENT_SECRET, SCANPRO_URL_SCHEME (optional)
+    SCANPRO_BASE_URL       SprintRay API-gateway origin, e.g. https://apx.sprintray.com
+    SCANPRO_API_KEY        gateway API key, sent as x-api-key on every SprintRay call
+    SCANPRO_CLIENT_ID, SCANPRO_CLIENT_SECRET
+    SCANPRO_URL_SCHEME     (optional)
 `;
 
 // Very small flag parser — no dependencies.

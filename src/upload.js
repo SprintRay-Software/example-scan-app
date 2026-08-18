@@ -22,18 +22,19 @@ function extractPresignedUrl(parsed) {
 
 /**
  * Ask the backend for a presigned upload URL for one file.
- * POST {baseUrl}/api/file/upload  Authorization: Bearer <accessToken>
+ * POST {baseUrl}/integration/file/upload  Authorization: Bearer <accessToken>  x-api-key: <apiKey>
  * Body is an ExternalProviderFileInputModel-like shape.
  */
 export async function getUploadLink(
   reporter,
-  { baseUrl, accessToken, fileName, fileSize, treatmentId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
+  { baseUrl, apiKey, accessToken, fileName, fileSize, treatmentId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
 ) {
-  const url = joinUrl(baseUrl, 'api/file/upload');
+  const url = joinUrl(baseUrl, 'integration/file/upload');
   const headers = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
     Authorization: `Bearer ${accessToken}`,
+    'x-api-key': apiKey,
   };
   const model = { fileName, fileSize, treatmentId, treatmentFileType, externalCaseId };
 
@@ -80,8 +81,8 @@ export async function getUploadLink(
 
 /**
  * PUT the raw file bytes to the presigned S3 URL, streaming so upload progress can be
- * reported. NO Authorization header on the S3 PUT — the presigned URL is self-authorizing.
- * Expects 200/204.
+ * reported. NO Authorization and NO x-api-key on the S3 PUT — the presigned URL is
+ * self-authorizing, and an extra header breaks its signature. Expects 200/204.
  */
 export async function putFile(reporter, presignedUrl, bytes, fileName) {
   const total = bytes.length;
@@ -113,13 +114,14 @@ export async function putFile(reporter, presignedUrl, bytes, fileName) {
  */
 export async function uploadFixture(
   reporter,
-  { baseUrl, accessToken, filePath, fileName, treatmentId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
+  { baseUrl, apiKey, accessToken, filePath, fileName, treatmentId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
 ) {
   const bytes = await readFile(filePath);
   reporter.info(`Read scan ${fileName} (${bytes.length} bytes)`);
 
   const presignedUrl = await getUploadLink(reporter, {
     baseUrl,
+    apiKey,
     accessToken,
     fileName,
     fileSize: bytes.length,

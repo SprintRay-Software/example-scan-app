@@ -56,7 +56,7 @@ function sampleLaunchUrl(scheme) {
   const payload = {
     caller: { name: 'scanpro-sim-smoketest', version: '0' },
     case: { ID: zeroGuid },
-    auth: { code: 'SMOKETEST-INVALID', tokenEndpoint: '/api/integration/device-login-token', expiresIn: 600 },
+    auth: { code: 'SMOKETEST-INVALID', tokenEndpoint: '/integration/device-login-token', expiresIn: 600 },
     treatmentId: zeroGuid,
   };
   return `${scheme}://${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')}`;

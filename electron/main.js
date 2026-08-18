@@ -77,7 +77,8 @@ const URL_SCHEME = (ENV.SCANPRO_URL_SCHEME || 'openScanPro').trim();
 
 function defaults() {
   return {
-    baseUrl: ENV.SCANPRO_BASE_URL || 'https://dashboard.sprintray.com',
+    baseUrl: ENV.SCANPRO_BASE_URL || 'https://apx.sprintray.com',
+    apiKey: ENV.SCANPRO_API_KEY || '',
     clientId: ENV.SCANPRO_CLIENT_ID || '',
     clientSecret: ENV.SCANPRO_CLIENT_SECRET || '',
     urlScheme: URL_SCHEME,
@@ -412,6 +413,7 @@ ipcMain.handle('flow:run', async (event, params) => {
   const { config: rawConfig, input } = params;
   const config = {
     baseUrl: normalizeBaseUrl(rawConfig.baseUrl),
+    apiKey: String(rawConfig.apiKey || '').trim(),
     clientId: String(rawConfig.clientId || '').trim(),
     clientSecret: String(rawConfig.clientSecret || '').trim(),
   };
