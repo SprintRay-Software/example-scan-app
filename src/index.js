@@ -54,6 +54,8 @@ Options:
     --code <code>          device-login code to exchange (Form B)
     --base-url <url>       override SCANPRO_BASE_URL for this run (Form B)
     --treatment-id <guid>  treatmentId to attach uploads to (Form B)
+    --upper-file <p>       scan to send as FileType 1 (default fixtures/upper.stl)
+    --lower-file <p>       scan to send as FileType 2 (default fixtures/lower.stl)
     --demo-refresh         also call the token refresh endpoint after exchange
     --scheme <s>           override the URL scheme for register/status/unregister
                            (else read from $SCANPRO_URL_SCHEME in .env)
@@ -75,6 +77,8 @@ function parseArgs(argv) {
     code: null,
     baseUrlOverride: null,
     treatmentId: null,
+    upperFile: null,
+    lowerFile: null,
     demoRefresh: false,
     help: false,
   };
@@ -94,6 +98,12 @@ function parseArgs(argv) {
         break;
       case '--treatment-id':
         args.treatmentId = argv[++i];
+        break;
+      case '--upper-file':
+        args.upperFile = argv[++i];
+        break;
+      case '--lower-file':
+        args.lowerFile = argv[++i];
         break;
       case '--demo-refresh':
         args.demoRefresh = true;
@@ -149,13 +159,16 @@ async function main() {
   const config = loadConfig(process.env);
   const reporter = createConsoleReporter();
 
+  // Both forms accept the same per-arch file overrides.
+  const files = { upperFileOverride: args.upperFile, lowerFileOverride: args.lowerFile };
   const input = hasFormA
-    ? { launchUrl: args.launchUrl, demoRefresh: args.demoRefresh }
+    ? { launchUrl: args.launchUrl, demoRefresh: args.demoRefresh, ...files }
     : {
         code: args.code,
         baseUrlOverride: args.baseUrlOverride,
         treatmentId: args.treatmentId,
         demoRefresh: args.demoRefresh,
+        ...files,
       };
 
   const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR });

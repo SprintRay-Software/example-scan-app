@@ -276,7 +276,8 @@ let mode = 'url';
 function currentInput() {
   const common = {
     demoRefresh: $('in-refresh').checked,
-    filePathOverride: $('in-file').value.trim() || null,
+    upperFileOverride: $('in-file-upper').value.trim() || null,
+    lowerFileOverride: $('in-file-lower').value.trim() || null,
   };
   if (mode === 'url') return { ...common, launchUrl: $('in-launch-url').value.trim() };
   return { ...common, code: $('in-code').value.trim(), treatmentId: $('in-treatment').value.trim() || null };
@@ -350,10 +351,15 @@ function wireSecretToggle(buttonId, inputId) {
 wireSecretToggle('btn-toggle-secret', 'cfg-client-secret');
 wireSecretToggle('btn-toggle-api-key', 'cfg-api-key');
 
-$('btn-pick').addEventListener('click', async () => {
-  const res = await window.scanpro.pickFile();
-  if (!res.canceled) $('in-file').value = res.path;
-});
+function wireFilePicker(buttonId, inputId) {
+  $(buttonId).addEventListener('click', async () => {
+    const res = await window.scanpro.pickFile();
+    if (!res.canceled) $(inputId).value = res.path;
+  });
+}
+
+wireFilePicker('btn-pick-upper', 'in-file-upper');
+wireFilePicker('btn-pick-lower', 'in-file-lower');
 
 $('btn-claim-scheme').addEventListener('click', async () => {
   const s = await window.scanpro.setDefaultScheme();

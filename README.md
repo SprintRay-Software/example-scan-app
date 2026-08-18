@@ -33,9 +33,10 @@ token ever travels in the launch URL**:
    treatment/case identifiers (see [Launch payload](#launch-payload)).
 3. **Exchange.** POST the `code` + your client credentials over HTTPS to obtain the signed-in
    doctor's `access_token`.
-4. **Upload.** Request a presigned upload URL for the requested scan (the launch payload's
-   `fileType` — one file per launch), then PUT the file bytes to it. The scan attaches to the
-   treatment automatically.
+4. **Upload.** A scanner captures both arches in one session, so a full-mouth scan (the launch
+   payload's `fileType` is `null`) requests a presigned upload URL for **each** file and PUTs them
+   in turn; a payload naming a `fileType` uploads only that arch. Scans attach to the treatment
+   automatically.
 
 ### Flow
 
@@ -55,10 +56,12 @@ sequenceDiagram
     App->>App: base64-decode payload, read code + tokenEndpoint
     App->>BE: exchange code + client credentials for a token
     BE-->>App: access_token + expires_in
-    App->>BE: request presigned upload URL for the requested scan (upper or lower)
-    BE-->>App: presigned upload URL
-    App->>S3: PUT raw file bytes
-    S3-->>App: 200 / 204
+    loop each scan file (full-mouth scan = upper + lower)
+        App->>BE: request presigned upload URL
+        BE-->>App: presigned upload URL
+        App->>S3: PUT raw file bytes
+        S3-->>App: 200 / 204
+    end
     deactivate App
     Note over Doctor,S3: scans are attached to the treatment
 ```
@@ -94,7 +97,7 @@ sequenceDiagram
 | `case.name` | patient display name |
 | `case.ID` | scan-job identifier for this launch |
 | `treatment.teeth[]` | selected teeth — `teeth` (tooth number), `notes`, `toothApplianceType`, `groupNumber` |
-| `fileType` | requested file type (`TreatmentFiles`; see [Enums](#enums)), or `null` for a full scan |
+| `fileType` | requested file type (`TreatmentFiles`; see [Enums](#enums)); `null` means a full-mouth scan, where both arches are uploaded |
 | `language` | UI locale, e.g. `en_US` |
 | `serverType` | server type indicator |
 | `toothSystem` | tooth numbering: `fdi` or `utn` |
@@ -168,9 +171,11 @@ Content-Length: <fileSize>
 
 `200`/`204` on success. **No** auth header on the PUT — the presigned URL is self-authorizing.
 
-- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. The example app uploads **one file
-  per launch**, chosen by the launch payload's `fileType`: `2` → `lower.stl`, anything else
-  (or no `fileType`) → `upper.stl`. The value and its source are logged for the upload.
+- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. A real scanner captures both arches in
+  one session, so when the launch payload's `fileType` is `null` (a full-mouth scan) the example app
+  uploads **both files in turn** — `upper.stl` (`1`) and `lower.stl` (`2`) — each going through its
+  own "presigned URL → PUT" round. When `fileType` names `1` or `2` (a single-arch rescan), only that
+  arch goes up. The value and its source are logged for each upload.
 - Scan files are **STL**.
 
 ## Enums
@@ -364,7 +369,7 @@ The window has three parts:
 - **Left — Configuration & input.** Gateway origin, API key, client id/secret, and URL scheme are prefilled
   from `.env` (editable per run). Paste a `openScanPro://<base64>` **launch URL**, or switch to
   **Manual code** to run with an explicit `code` + treatment id. Optionally pick a custom scan file
-  and toggle the token-refresh step.
+  for the upper and lower arch separately, and toggle the token-refresh step.
 - **Right — Observability.**
   - **Pipeline** — the desktop-app steps in order (decode → exchange → optional refresh → presigned
     URL → S3 PUT), each showing live status and a one-line detail.
@@ -408,12 +413,14 @@ node --env-file=.env src/index.js "yourscheme://<base64_json>"
 node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-id <guid>
 ```
 
-Add `--demo-refresh` to also exercise the token-refresh endpoint.
+Add `--demo-refresh` to also exercise the token-refresh endpoint; `--upper-file <p>` / `--lower-file <p>`
+swap the file sent for either arch.
 
 ### What it does
 
-Each run exchanges the code, then uploads a single scan — `fixtures/lower.stl` when the launch
-payload's `fileType` is `2` (lower jaw), otherwise `fixtures/upper.stl` — with a live progress bar.
+Each run exchanges the code, then uploads the way the scanner really does — a full-mouth scan
+(`fileType` is `null`) sends `fixtures/upper.stl` and `fixtures/lower.stl` in turn, and a payload
+naming an arch sends only that one — each with a live progress bar.
 **Every backend request and response is logged in full** (method, URL, headers, body / status,
 headers, body) so you can see exactly what to send and what to expect. Swap the files in `fixtures/`
 to upload your own scans.

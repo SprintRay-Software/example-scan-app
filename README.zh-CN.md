@@ -28,7 +28,8 @@
 2. **解码。** 对 payload 做 base64 解码,读取 `code`、token 接口路径,以及 treatment / case 标识
    (见[启动 payload](#启动-payload))。
 3. **换取 token。** 通过 HTTPS 把 `code` + 你的客户端凭据 POST 上去,换取已登录医生的 `access_token`。
-4. **上传。** 为本次请求的扫描文件(启动 payload 中的 `fileType` —— 每次拉起只传一个文件)申请预签名上传 URL,再把文件字节 PUT 上去。扫描文件会自动挂到 treatment 上。
+4. **上传。** 扫描仪一次就把上下颌都扫完,所以整口扫描(启动 payload 的 `fileType` 为 `null`)会为**两个**文件
+   各申请一次预签名上传 URL 并分别 PUT;`fileType` 指定某一颌时只传那一个。扫描文件会自动挂到 treatment 上。
 
 ### 流程
 
@@ -48,10 +49,12 @@ sequenceDiagram
     App->>App: base64 解码 payload，读取 code + tokenEndpoint
     App->>BE: 用 code + 客户端凭据换取 token
     BE-->>App: access_token + expires_in
-    App->>BE: 为请求的扫描文件（上颌或下颌）申请预签名上传 URL
-    BE-->>App: 预签名上传 URL
-    App->>S3: PUT 原始文件字节
-    S3-->>App: 200 / 204
+    loop 每个扫描文件（整口扫描 = 上颌 + 下颌）
+        App->>BE: 申请预签名上传 URL
+        BE-->>App: 预签名上传 URL
+        App->>S3: PUT 原始文件字节
+        S3-->>App: 200 / 204
+    end
     deactivate App
     Note over Doctor,S3: 扫描文件挂载到 treatment
 ```
@@ -87,7 +90,7 @@ sequenceDiagram
 | `case.name` | 患者显示名 |
 | `case.ID` | 本次拉起的 scan-job 标识 |
 | `treatment.teeth[]` | 选中的牙位 —— `teeth`(牙号)、`notes`、`toothApplianceType`、`groupNumber` |
-| `fileType` | 请求的文件类型(`TreatmentFiles`;见 [枚举](#枚举)),整口扫描时为 `null` |
+| `fileType` | 请求的文件类型(`TreatmentFiles`;见 [枚举](#枚举));整口扫描时为 `null`,此时上下颌两个文件都要上传 |
 | `language` | 界面语言,如 `en_US` |
 | `serverType` | 服务器类型标识 |
 | `toothSystem` | 牙位编号系统:`fdi` 或 `utn` |
@@ -158,8 +161,10 @@ Content-Length: <fileSize>
 
 成功返回 `200`/`204`。PUT 请求**不带**鉴权头 —— 预签名 URL 自带授权。
 
-- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。示例应用**每次拉起只上传一个文件**,由启动 payload 中的
-  `fileType` 决定:`2` → `lower.stl`,其它(或未提供 `fileType`)→ `upper.stl`。日志中会打印所用的取值及其来源。
+- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。真实扫描仪一次扫完上下颌,因此启动 payload 的 `fileType`
+  为 `null`(整口扫描)时,示例应用会**依次上传两个文件** —— `upper.stl`(`1`)与 `lower.stl`(`2`),
+  每个文件各走一遍"申请预签名 URL → PUT"。`fileType` 指定为 `1` 或 `2` 时(单颌重扫),只上传对应那一颌。
+  日志中会打印每个文件所用的取值及其来源。
 - 扫描文件为 **STL** 格式。
 
 ## 枚举
@@ -350,7 +355,7 @@ npm run app               # 启动桌面 UI
 
 - **左侧 —— 配置与输入。** 网关 origin、API key、client id/secret、URL scheme 会从 `.env` 预填(可按次修改)。
   粘贴 `openScanPro://<base64>` **启动 URL**,或切到 **Manual code** 用显式 `code` + treatment id 运行;
-  还可选择自定义扫描文件、勾选是否额外走 token 刷新步骤。
+  还可分别为上颌、下颌指定自定义扫描文件,并勾选是否额外走 token 刷新步骤。
 - **右侧 —— 观测区。**
   - **Pipeline** —— 桌面应用侧的步骤按序展示(解析 → 换 token → 可选刷新 → 预签名 URL → S3 PUT),
     每步显示实时状态与一行摘要。
@@ -389,12 +394,14 @@ node --env-file=.env src/index.js "yourscheme://<base64_json>"
 node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-id <guid>
 ```
 
-追加 `--demo-refresh` 可一并演示 token 刷新接口。
+追加 `--demo-refresh` 可一并演示 token 刷新接口;`--upper-file <p>` / `--lower-file <p>` 可替换某一颌
+要上传的文件。
 
 ### 它做了什么
 
-每次运行会:换取 token,然后上传**单个**扫描文件 —— 当启动 payload 的 `fileType` 为 `2`(下颌)时上传
-`fixtures/lower.stl`,否则上传 `fixtures/upper.stl` —— 并展示实时进度条。
+每次运行会:换取 token,然后按扫描仪的真实行为上传 —— 整口扫描(`fileType` 为 `null`)依次上传
+`fixtures/upper.stl` 与 `fixtures/lower.stl` 两个文件,`fileType` 指定某一颌时只上传那一个 —— 
+每个文件都带实时进度条。
 **每个后端请求与响应都会被完整打印**(方法、URL、请求头、请求体 / 状态码、响应头、响应体),
 让你清楚地看到该发送什么、该期望什么。把 `fixtures/` 里的文件替换成你自己的扫描件即可测试其它数据。
 
