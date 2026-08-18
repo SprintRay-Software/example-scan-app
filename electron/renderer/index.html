@@ -79,12 +79,19 @@
         <section class="panel">
           <div class="panel-head"><h2>Upload</h2></div>
           <label class="field">
-            <span>Scan file</span>
+            <span>Upper scan <em>(FileType 1)</em></span>
             <span class="secret-row">
-              <input id="in-file" type="text" spellcheck="false" placeholder="default: fixtures/upper.stl or lower.stl" readonly />
-              <button id="btn-pick" class="btn btn-ghost btn-sm" type="button">Browse</button>
+              <input id="in-file-upper" type="text" spellcheck="false" placeholder="default: fixtures/upper.stl" readonly />
+              <button id="btn-pick-upper" class="btn btn-ghost btn-sm" type="button">Browse</button>
             </span>
-            <span class="hint">Empty = pick the bundled fixture by the payload's fileType (1=upper, 2=lower).</span>
+          </label>
+          <label class="field">
+            <span>Lower scan <em>(FileType 2)</em></span>
+            <span class="secret-row">
+              <input id="in-file-lower" type="text" spellcheck="false" placeholder="default: fixtures/lower.stl" readonly />
+              <button id="btn-pick-lower" class="btn btn-ghost btn-sm" type="button">Browse</button>
+            </span>
+            <span class="hint">Empty = use the bundled fixture. A payload with no <code>fileType</code> is a full-mouth scan and uploads both; a payload naming <code>fileType</code> uploads only that arch.</span>
           </label>
           <label class="check">
             <input id="in-refresh" type="checkbox" />

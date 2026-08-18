@@ -1,5 +1,8 @@
-# Local dev env (contains client secret)
+# Local dev env (contains the client secret and the gateway API key).
+# Cover sibling copies too — a .env.bak / .env.local holds the same secrets.
 .env
+.env.*
+!.env.example
 
 # Dependencies (Electron is a devDependency; the CLI stays zero-dependency)
 node_modules

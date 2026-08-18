@@ -1,5 +1,5 @@
 // The single, instrumented desktop-app flow: decode the launch payload, exchange the
-// device-login code for the doctor's tokens, optionally refresh, then upload one scan.
+// device-login code for the doctor's tokens, optionally refresh, then upload the scans.
 // It is UI-agnostic — every observable event goes through the injected reporter, so the
 // CLI console and the Electron UI run the exact same steps and see the exact same wire
 // traffic. See ../../README.md and the DS spec (docs/third-party-desktop-scanner-integration.md).
@@ -26,6 +26,19 @@ export function decodeLaunch(launchUrl) {
 }
 
 /**
+ * Resolve one arch to the file that will be sent for it: the caller's own pick when there is
+ * one, else the bundled fixture for that arch.
+ */
+function buildUpload(treatmentFileType, fileTypeSource, input, fixturesDir) {
+  const isLower = treatmentFileType === TreatmentFileType.LowerJaw;
+  const override = isLower ? input.lowerFileOverride : input.upperFileOverride;
+  const filePath = override
+    ? resolve(override)
+    : resolve(fixturesDir, isLower ? 'lower.stl' : 'upper.stl');
+  return { treatmentFileType, fileTypeSource, filePath, fileName: basename(filePath) };
+}
+
+/**
  * Run the device-login + upload flow.
  *
  * @param {import('./reporter.js').createReporter} reporter
@@ -34,7 +47,7 @@ export function decodeLaunch(launchUrl) {
  * @param {object} opts.input
  *   Form A: { launchUrl }
  *   Form B: { code, baseUrlOverride?, treatmentId? }
- *   both:   { demoRefresh?, filePathOverride? }
+ *   both:   { demoRefresh?, upperFileOverride?, lowerFileOverride? }
  * @param {string} opts.fixturesDir  where upper.stl / lower.stl live
  * @returns {Promise<{ ok: boolean, results: object[], failures: object[] }>}
  */
@@ -44,7 +57,7 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
   let code;
   let treatmentId;
   let externalCaseId;
-  // Requested TreatmentFiles type from the launch payload; null = full scan (use per-file default).
+  // Requested TreatmentFiles type from the launch payload; null = full-mouth scan (both arches).
   let payloadFileType = null;
 
   const hasFormA = Boolean(input.launchUrl && String(input.launchUrl).trim());
@@ -69,7 +82,7 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     reporter.info(`externalCaseId=${externalCaseId}`);
     reporter.info(
       payloadFileType === null
-        ? 'launch payload fileType = null (full scan; per-file default will be used)'
+        ? 'launch payload fileType = null (full-mouth scan; upper AND lower will be uploaded)'
         : `launch payload fileType = ${payloadFileType} (${fileTypeName(payloadFileType)})`
     );
     reporter.phase('decode', 'done', `code=${code}`);
@@ -111,42 +124,50 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     });
   }
 
-  // 2) Upload exactly one scan, chosen by the requested fileType (upper vs lower).
+  // 2) Upload the scans. A real scanner captures both arches in one session and sends them
+  // together, which is exactly what a launch carrying no fileType — a full-mouth scan — means,
+  // so that path uploads upper AND lower. A launch that does name a fileType is the web app
+  // asking for one arch on its own (a rescan of a single jaw); then only that one goes up.
   const hasType = payloadFileType !== null && payloadFileType !== undefined;
-  const treatmentFileType = hasType ? Number(payloadFileType) : TreatmentFileType.UpperJaw;
-  const fileTypeSource = hasType ? 'launch payload' : 'default (no fileType in payload)';
-  const isLower = treatmentFileType === TreatmentFileType.LowerJaw;
-  const defaultFile = isLower ? 'lower.stl' : 'upper.stl';
+  const uploads = hasType
+    ? [buildUpload(Number(payloadFileType), 'launch payload', input, fixturesDir)]
+    : [
+        buildUpload(TreatmentFileType.UpperJaw, 'full-mouth scan (no fileType in payload)', input, fixturesDir),
+        buildUpload(TreatmentFileType.LowerJaw, 'full-mouth scan (no fileType in payload)', input, fixturesDir),
+      ];
 
-  const filePath = input.filePathOverride
-    ? resolve(input.filePathOverride)
-    : resolve(fixturesDir, defaultFile);
-  const fileName = basename(filePath);
-
+  const describe = (u) => `${u.fileName} (FileType ${u.treatmentFileType}/${fileTypeName(u.treatmentFileType)})`;
   reporter.step(
-    `Uploading one scan for FileType ${treatmentFileType} (${fileTypeName(treatmentFileType)}) ` +
-      `from ${fileTypeSource}: ${fileName}`
+    hasType
+      ? `Uploading one scan, requested by the launch payload: ${describe(uploads[0])}`
+      : `Uploading ${uploads.length} scans captured in one session: ${uploads.map(describe).join(', ')}`
   );
 
   const results = [];
   const failures = [];
 
-  try {
-    const r = await uploadFixture(reporter, {
-      baseUrl,
-      apiKey: config.apiKey,
-      accessToken: tokens.access_token,
-      filePath,
-      fileName,
-      treatmentId,
-      treatmentFileType,
-      fileTypeSource,
-      externalCaseId,
-    });
-    results.push(r);
-  } catch (err) {
-    reporter.fail(`Upload failed for ${fileName}: ${err.message}`);
-    failures.push({ fileName, error: err.message });
+  // Sequential, not parallel: the progress bar and the per-request transaction log are the
+  // whole point of this app, and two uploads racing would interleave both into noise.
+  for (const upload of uploads) {
+    try {
+      const r = await uploadFixture(reporter, {
+        baseUrl,
+        apiKey: config.apiKey,
+        accessToken: tokens.access_token,
+        filePath: upload.filePath,
+        fileName: upload.fileName,
+        treatmentId,
+        treatmentFileType: upload.treatmentFileType,
+        fileTypeSource: upload.fileTypeSource,
+        externalCaseId,
+      });
+      results.push(r);
+    } catch (err) {
+      // Keep going: one arch failing should still get the other one up, and the summary
+      // reports exactly which succeeded.
+      reporter.fail(`Upload failed for ${upload.fileName}: ${err.message}`);
+      failures.push({ fileName: upload.fileName, error: err.message });
+    }
   }
 
   const summary = { ok: failures.length === 0, results, failures };
