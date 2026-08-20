@@ -108,7 +108,7 @@ sequenceDiagram
 | `auth.tokenEndpoint` | token endpoint **path** — join onto the backend origin |
 | `auth.expiresIn` | code lifetime, seconds |
 | `treatmentId` | treatment the uploaded scans attach to |
-| `externalCaseId` | external case id (send back as `externalCaseId` on upload). A case reference, **not** a session id — two launches can carry the same one, so `case.ID` is what identifies the session |
+| `externalCaseId` | optional case reference; **null from SprintRay's web app**, which sends none. Echo it back on upload when it is there. It is not a session id — two launches can carry the same one — so `case.ID` is what identifies the session, and the only field to correlate on |
 
 > The `auth`, `treatmentId` and `externalCaseId` fields are the SprintRay
 > silent-auth + upload context; the rest is the standard ScanPro launch payload.
@@ -212,8 +212,10 @@ Content-Type: application/json
 ```
 
 - `scanJobId` is the resolution key, and it is simply the launch payload's `case.ID`.
-- `caseId` is accepted **instead** of `scanJobId` only if you did not keep the id. It is a weaker
-  key: a case id is not unique per launch, so SprintRay resolves the newest session carrying it.
+- `caseId` is accepted **instead** of `scanJobId` only if you did not keep the id, and only if you
+  were given one — SprintRay's web app sends none, so `externalCaseId` is normally null. It is a
+  weaker key regardless: a case id is not unique per launch, so SprintRay resolves the newest
+  session carrying it. Keep `case.ID`; it is always there.
 - **Idempotent.** Calling it again on a finished session returns `200` and changes nothing, so a
   retry after a network error is safe.
 - Once a session is finished it takes no further uploads. A re-scan is a new launch and a new
