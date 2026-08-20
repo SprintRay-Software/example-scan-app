@@ -73,15 +73,18 @@ function setPhase(stage, status, detail) {
   node.dataset.state = status;
   node.querySelector('.pl-status').textContent = status;
   if (detail !== undefined) node.querySelector('.pl-detail').textContent = detail || '';
-  if (stage === 'refresh' && status !== 'skipped') node.classList.remove('pl-optional');
+  // A step the run actually reached stops being dimmed as optional.
+  if (status !== 'skipped') node.classList.remove('pl-optional');
 }
 function resetPipeline() {
   document.querySelectorAll('.pl-node').forEach((n) => {
-    const optional = n.classList.contains('pl-optional') || n.dataset.stage === 'refresh';
+    // data-optional marks the steps a run may legitimately not reach (token refresh, and the
+    // scan-finish call on the Form B dev path), so they read "skipped" rather than "pending".
+    const optional = n.dataset.optional === '1';
     n.dataset.state = '';
     n.querySelector('.pl-status').textContent = optional ? 'skipped' : 'pending';
     n.querySelector('.pl-detail').textContent = '';
-    if (n.dataset.stage === 'refresh') n.classList.add('pl-optional');
+    n.classList.toggle('pl-optional', optional);
   });
 }
 
@@ -103,6 +106,7 @@ function renderPayload({ decoded, fields }) {
     ['auth.code', fields.code],
     ['auth.tokenEndpoint', fields.tokenEndpoint],
     ['treatmentId', fields.treatmentId],
+    ['scanJobId (case.ID)', fields.scanJobId],
     ['externalCaseId', fields.externalCaseId],
     ['fileType', fileTypeLabel(fields.fileType)],
   ];

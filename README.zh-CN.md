@@ -50,11 +50,14 @@ sequenceDiagram
     App->>BE: 用 code + 客户端凭据换取 token
     BE-->>App: access_token + expires_in
     loop 每个扫描文件（整口扫描 = 上颌 + 下颌）
-        App->>BE: 申请预签名上传 URL
+        App->>BE: 申请预签名上传 URL（请求体带 scanJobId）
         BE-->>App: 预签名上传 URL
         App->>S3: PUT 原始文件字节
         S3-->>App: 200 / 204
     end
+    App->>BE: 本次扫描会话结束（scanJobId）
+    BE-->>App: 200
+    BE-->>Web: 扫描会话状态事件
     deactivate App
     Note over Doctor,S3: 扫描文件挂载到 treatment
 ```
@@ -88,7 +91,7 @@ sequenceDiagram
 |---|---|
 | `caller` | 拉起方(`SprintRay` + Web 端版本) |
 | `case.name` | 患者显示名 |
-| `case.ID` | 本次拉起的 scan-job 标识 |
+| `case.ID` | **本次拉起的扫描会话**。每次上传以及扫描结束调用都要把它作为 `scanJobId` 传回 |
 | `treatment.teeth[]` | 选中的牙位 —— `teeth`(牙号)、`notes`、`toothApplianceType`、`groupNumber` |
 | `fileType` | 请求的文件类型(`TreatmentFiles`;见 [枚举](#枚举));整口扫描时为 `null`,此时上下颌两个文件都要上传 |
 | `language` | 界面语言,如 `en_US` |
@@ -98,14 +101,14 @@ sequenceDiagram
 | `auth.tokenEndpoint` | token 接口**路径** —— 拼接到后端 origin 之后 |
 | `auth.expiresIn` | code 有效期(秒) |
 | `treatmentId` | 上传的扫描文件要挂载到的 treatment |
-| `externalCaseId` | 外部 case id(上传时作为 `externalCaseId` 传回) |
+| `externalCaseId` | 外部 case id(上传时作为 `externalCaseId` 传回)。它是 case 引用,**不是**会话标识 —— 两次拉起可能带同一个值,标识会话的是 `case.ID` |
 
 > `auth`、`treatmentId`、`externalCaseId` 是 SprintRay 的静默鉴权与上传上下文;
 > 其余为标准 ScanPro 启动 payload。
 
 ## 接口约定
 
-共两个调用。两者都经由 SprintRay API 网关,`{ORIGIN}` 为对应环境下固定的网关 origin:
+共三个调用。它们都经由 SprintRay API 网关,`{ORIGIN}` 为对应环境下固定的网关 origin:
 
 | 环境 | `{ORIGIN}` |
 |---|---|
@@ -115,7 +118,7 @@ sequenceDiagram
 
 对应环境的 origin 由 SprintRay 提供。
 
-**两个调用都必须带上 `x-api-key`** —— SprintRay 为你的集成签发的网关 API key(与 client id / client
+**每个调用都必须带上 `x-api-key`** —— SprintRay 为你的集成签发的网关 API key(与 client id / client
 secret 是两回事:API key 标识调用方并决定限流额度,client 凭据用于换取医生 token)。缺少该头会在
 请求到达 SprintRay 后端之前被网关以 `403` 拒绝。
 
@@ -146,6 +149,7 @@ x-api-key: <your-api-key>
 Content-Type: application/json
 
 { "fileName": "upper.stl", "fileSize": 3083734, "treatmentId": "<treatment-id>",
+  "scanJobId": "<启动 payload 中的 case.ID>",
   "treatmentFileType": 1, "externalCaseId": "<external-case-id>" }
 ```
 
@@ -161,11 +165,63 @@ Content-Length: <fileSize>
 
 成功返回 `200`/`204`。PUT 请求**不带**鉴权头 —— 预签名 URL 自带授权。
 
+- `scanJobId`:即启动 payload 中的 `case.ID`,标识该文件所属的扫描会话。**每次上传都要带上** ——
+  SprintRay 靠它跟踪会话进度;对于不携带 treatment 的拉起,这也是其上传能被记录下来的唯一途径。
+  `treatmentId` 仍各司其职,负责把文件绑定到 treatment,两者并存。
 - `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。真实扫描仪一次扫完上下颌,因此启动 payload 的 `fileType`
   为 `null`(整口扫描)时,示例应用会**依次上传两个文件** —— `upper.stl`(`1`)与 `lower.stl`(`2`),
   每个文件各走一遍"申请预签名 URL → PUT"。`fileType` 指定为 `1` 或 `2` 时(单颌重扫),只上传对应那一颌。
   日志中会打印每个文件所用的取值及其来源。
 - 扫描文件为 **STL** 格式。
+
+### 3. 告知 SprintRay 本次扫描会话已结束
+
+在**最后一个文件上传完成后调用一次**。上传文件本身并不表示"扫描结束":SprintRay 只能看到每颌各一个
+上传事件,无法区分"上颌到了"与"医生扫完了"。这个调用负责把会话收尾,并推送 Web 端一直在等的事件,
+医生的浏览器据此离开扫描页面。
+
+```http
+POST {ORIGIN}/integration/scan-job/complete
+Authorization: Bearer <access_token>
+x-api-key: <your-api-key>
+Content-Type: application/json
+
+{ "scanJobId": "<启动 payload 中的 case.ID>" }
+```
+
+`200 →` 结束后的会话:
+
+```json
+{ "id": "<scan-job id>", "treatmentId": "<treatment id 或 null>", "caseId": "<external case id>",
+  "status": 3, "externalProviderId": "scanpro",
+  "files": [ { "fileType": 1, "fileGuid": "…", "status": 3 } ],
+  "createdDate": "2026-08-20T07:31:00Z", "modifiedDate": "2026-08-20T07:36:12Z" }
+```
+
+- `scanJobId` 是定位会话的键,就是启动 payload 里的 `case.ID`。
+- 只有在你确实没有保留该 id 时,才可以用 `caseId` **替代** `scanJobId`。它是更弱的键:case id
+  并非每次拉起唯一,SprintRay 会取携带该值的最新会话。
+- **幂等。** 对已结束的会话再次调用返回 `200` 且不改变任何状态,因此网络出错后重试是安全的。
+- 会话一旦结束就不再接收上传。重扫是一次新的拉起、一个新的会话。
+
+错误:`400` 既未传 `scanJobId` 也未传 `caseId` · `401` access token 缺失或过期 · `403` 缺少或
+无效的 `x-api-key` · `404` 会话不存在,**或**属于其他医生(两者故意不作区分)。
+
+### 4. 读取扫描会话（可选）
+
+你的应用并不需要这个接口,这里列出是因为它是同一个会话资源。它回答的是"SprintRay 目前收到了哪几颌、
+会话处于什么状态" —— 扫描中途出问题、想确认到底落了哪些文件时有用。
+
+```http
+GET {ORIGIN}/integration/scan-job/{scanJobId}
+Authorization: Bearer <access_token>
+x-api-key: <your-api-key>
+```
+
+`200 →` 与结束调用相同的响应结构。错误同上:`401` · `403` · `404`。
+
+`status` 取值:`1` pulled · `2` transferring · `3` done。文件级 `status`:`1` pending ·
+`2` uploaded · `3` 已挂载到 treatment。
 
 ## 枚举
 
@@ -401,7 +457,8 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 
 每次运行会:换取 token,然后按扫描仪的真实行为上传 —— 整口扫描(`fileType` 为 `null`)依次上传
 `fixtures/upper.stl` 与 `fixtures/lower.stl` 两个文件,`fileType` 指定某一颌时只上传那一个 —— 
-每个文件都带实时进度条。
+每个文件都带实时进度条。最后一个文件上传完成后会发起扫描结束调用,让整个流程与真实会话一致。
+形式 B(`--code`,无启动 URL)没有 `case.ID`,也就没有会话可结束,该步骤会标记为 skipped。
 **每个后端请求与响应都会被完整打印**(方法、URL、请求头、请求体 / 状态码、响应头、响应体),
 让你清楚地看到该发送什么、该期望什么。把 `fixtures/` 里的文件替换成你自己的扫描件即可测试其它数据。
 

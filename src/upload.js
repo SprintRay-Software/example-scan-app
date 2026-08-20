@@ -27,7 +27,7 @@ function extractPresignedUrl(parsed) {
  */
 export async function getUploadLink(
   reporter,
-  { baseUrl, apiKey, accessToken, fileName, fileSize, treatmentId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
+  { baseUrl, apiKey, accessToken, fileName, fileSize, treatmentId, scanJobId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
 ) {
   const url = joinUrl(baseUrl, 'integration/file/upload');
   const headers = {
@@ -36,7 +36,10 @@ export async function getUploadLink(
     Authorization: `Bearer ${accessToken}`,
     'x-api-key': apiKey,
   };
-  const model = { fileName, fileSize, treatmentId, treatmentFileType, externalCaseId };
+  // scanJobId names the scan session this file belongs to; treatmentId binds it to the treatment.
+  // They coexist, and a launch with no treatment behind it sends scanJobId alone — that is the only
+  // way its uploads get recorded.
+  const model = { fileName, fileSize, treatmentId, scanJobId, treatmentFileType, externalCaseId };
 
   // Highlight which FileType is being sent in the upload body and where it came from.
   reporter.phase('link', 'active', `FileType ${treatmentFileType} (${fileTypeName(treatmentFileType)})`);
@@ -114,7 +117,7 @@ export async function putFile(reporter, presignedUrl, bytes, fileName) {
  */
 export async function uploadFixture(
   reporter,
-  { baseUrl, apiKey, accessToken, filePath, fileName, treatmentId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
+  { baseUrl, apiKey, accessToken, filePath, fileName, treatmentId, scanJobId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
 ) {
   const bytes = await readFile(filePath);
   reporter.info(`Read scan ${fileName} (${bytes.length} bytes)`);
@@ -126,6 +129,7 @@ export async function uploadFixture(
     fileName,
     fileSize: bytes.length,
     treatmentId,
+    scanJobId,
     treatmentFileType,
     fileTypeSource,
     externalCaseId,

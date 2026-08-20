@@ -57,11 +57,14 @@ sequenceDiagram
     App->>BE: exchange code + client credentials for a token
     BE-->>App: access_token + expires_in
     loop each scan file (full-mouth scan = upper + lower)
-        App->>BE: request presigned upload URL
+        App->>BE: request presigned upload URL (scanJobId in the body)
         BE-->>App: presigned upload URL
         App->>S3: PUT raw file bytes
         S3-->>App: 200 / 204
     end
+    App->>BE: scan session finished (scanJobId)
+    BE-->>App: 200
+    BE-->>Web: scan-session status event
     deactivate App
     Note over Doctor,S3: scans are attached to the treatment
 ```
@@ -95,7 +98,7 @@ sequenceDiagram
 |---|---|
 | `caller` | who launched the app (`SprintRay` + web app version) |
 | `case.name` | patient display name |
-| `case.ID` | scan-job identifier for this launch |
+| `case.ID` | **the scan session of this launch.** Send it back as `scanJobId` on every upload and on the scan-finish call |
 | `treatment.teeth[]` | selected teeth — `teeth` (tooth number), `notes`, `toothApplianceType`, `groupNumber` |
 | `fileType` | requested file type (`TreatmentFiles`; see [Enums](#enums)); `null` means a full-mouth scan, where both arches are uploaded |
 | `language` | UI locale, e.g. `en_US` |
@@ -105,14 +108,14 @@ sequenceDiagram
 | `auth.tokenEndpoint` | token endpoint **path** — join onto the backend origin |
 | `auth.expiresIn` | code lifetime, seconds |
 | `treatmentId` | treatment the uploaded scans attach to |
-| `externalCaseId` | external case id (send back as `externalCaseId` on upload) |
+| `externalCaseId` | external case id (send back as `externalCaseId` on upload). A case reference, **not** a session id — two launches can carry the same one, so `case.ID` is what identifies the session |
 
 > The `auth`, `treatmentId` and `externalCaseId` fields are the SprintRay
 > silent-auth + upload context; the rest is the standard ScanPro launch payload.
 
 ## API contract
 
-Two calls. Both go through the SprintRay API gateway; `{ORIGIN}` is the fixed gateway origin for
+Three calls. All go through the SprintRay API gateway; `{ORIGIN}` is the fixed gateway origin for
 your environment:
 
 | Environment | `{ORIGIN}` |
@@ -123,7 +126,7 @@ your environment:
 
 SprintRay provides the origin for your target environment.
 
-**Both calls must carry `x-api-key`** — the gateway API key SprintRay issues for your integration
+**Every call must carry `x-api-key`** — the gateway API key SprintRay issues for your integration
 (a different thing from the client id / client secret: the API key identifies the caller and
 selects its usage plan, the client credentials exchange the code for the doctor's token). Without
 it the gateway rejects the request with `403` before it reaches the SprintRay backend.
@@ -156,6 +159,7 @@ x-api-key: <your-api-key>
 Content-Type: application/json
 
 { "fileName": "upper.stl", "fileSize": 3083734, "treatmentId": "<treatment-id>",
+  "scanJobId": "<case.ID from the launch payload>",
   "treatmentFileType": 1, "externalCaseId": "<external-case-id>" }
 ```
 
@@ -171,12 +175,70 @@ Content-Length: <fileSize>
 
 `200`/`204` on success. **No** auth header on the PUT — the presigned URL is self-authorizing.
 
+- `scanJobId`: the launch payload's `case.ID`. It names the scan session this file belongs to.
+  Send it on every upload — it is what lets SprintRay track the session's progress, and it is the
+  only way a launch that carries no treatment gets its uploads recorded at all. `treatmentId` keeps
+  its own job of binding the file to the treatment; the two coexist.
 - `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. A real scanner captures both arches in
   one session, so when the launch payload's `fileType` is `null` (a full-mouth scan) the example app
   uploads **both files in turn** — `upper.stl` (`1`) and `lower.stl` (`2`) — each going through its
   own "presigned URL → PUT" round. When `fileType` names `1` or `2` (a single-arch rescan), only that
   arch goes up. The value and its source are logged for each upload.
 - Scan files are **STL**.
+
+### 3. Tell SprintRay the scan session is finished
+
+Call this **once, after your last upload**. Uploading files does not say "the scan is over":
+SprintRay sees one upload event per arch and cannot tell "the upper jaw arrived" from "the doctor is
+done scanning". This call is what closes the session out and pushes the event the web app waits on,
+so the doctor's browser can leave the scanning screen.
+
+```http
+POST {ORIGIN}/integration/scan-job/complete
+Authorization: Bearer <access_token>
+x-api-key: <your-api-key>
+Content-Type: application/json
+
+{ "scanJobId": "<case.ID from the launch payload>" }
+```
+
+`200 →` the finished session:
+
+```json
+{ "id": "<scan-job id>", "treatmentId": "<treatment id or null>", "caseId": "<external case id>",
+  "status": 3, "externalProviderId": "scanpro",
+  "files": [ { "fileType": 1, "fileGuid": "…", "status": 3 } ],
+  "createdDate": "2026-08-20T07:31:00Z", "modifiedDate": "2026-08-20T07:36:12Z" }
+```
+
+- `scanJobId` is the resolution key, and it is simply the launch payload's `case.ID`.
+- `caseId` is accepted **instead** of `scanJobId` only if you did not keep the id. It is a weaker
+  key: a case id is not unique per launch, so SprintRay resolves the newest session carrying it.
+- **Idempotent.** Calling it again on a finished session returns `200` and changes nothing, so a
+  retry after a network error is safe.
+- Once a session is finished it takes no further uploads. A re-scan is a new launch and a new
+  session.
+
+Errors: `400` neither `scanJobId` nor `caseId` sent · `401` expired/missing access token · `403`
+missing or invalid `x-api-key` · `404` no such session, **or** it belongs to another doctor (the two
+are deliberately indistinguishable).
+
+### 4. Read a scan session back (optional)
+
+Your app does not need this; it is here because it is the same session resource. It answers "which
+arches has SprintRay got, and where does the session stand" — useful when something went wrong
+mid-scan and you want to see what actually landed.
+
+```http
+GET {ORIGIN}/integration/scan-job/{scanJobId}
+Authorization: Bearer <access_token>
+x-api-key: <your-api-key>
+```
+
+`200 →` the same body shape as the finish call. Errors: `401` · `403` · `404` as above.
+
+`status` values: `1` pulled · `2` transferring · `3` done. Per-file `status`: `1` pending ·
+`2` uploaded · `3` attached to the treatment.
 
 ## Enums
 
@@ -420,7 +482,9 @@ swap the file sent for either arch.
 
 Each run exchanges the code, then uploads the way the scanner really does — a full-mouth scan
 (`fileType` is `null`) sends `fixtures/upper.stl` and `fixtures/lower.stl` in turn, and a payload
-naming an arch sends only that one — each with a live progress bar.
+naming an arch sends only that one — each with a live progress bar. After the last upload it makes
+the scan-finish call, so the run ends the way a real session does. Form B (`--code`, no launch URL)
+has no `case.ID`, so there is no session to finish and that step reports as skipped.
 **Every backend request and response is logged in full** (method, URL, headers, body / status,
 headers, body) so you can see exactly what to send and what to expect. Swap the files in `fixtures/`
 to upload your own scans.

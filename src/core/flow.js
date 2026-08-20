@@ -1,5 +1,6 @@
 // The single, instrumented desktop-app flow: decode the launch payload, exchange the
-// device-login code for the doctor's tokens, optionally refresh, then upload the scans.
+// device-login code for the doctor's tokens, optionally refresh, upload the scans, then tell
+// SprintRay the scan session is finished.
 // It is UI-agnostic — every observable event goes through the injected reporter, so the
 // CLI console and the Electron UI run the exact same steps and see the exact same wire
 // traffic. See ../../README.md and the DS spec (docs/third-party-desktop-scanner-integration.md).
@@ -10,6 +11,7 @@ import { normalizeBaseUrl } from '../config.js';
 import { parseLaunchUrl, extractFields, TreatmentFileType, fileTypeName } from '../payload.js';
 import { exchangeCodeForTokens, refreshTokens } from '../auth.js';
 import { uploadFixture } from '../upload.js';
+import { completeScanJob } from '../complete.js';
 
 // Fallback only. Form A always takes the path from the launch payload's auth.tokenEndpoint —
 // that field exists so SprintRay can move the route without a desktop-app release.
@@ -56,6 +58,7 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
   let tokenPath = DEFAULT_TOKEN_PATH;
   let code;
   let treatmentId;
+  let scanJobId;
   let externalCaseId;
   // Requested TreatmentFiles type from the launch payload; null = full-mouth scan (both arches).
   let payloadFileType = null;
@@ -73,12 +76,14 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     // tokenEndpoint from the payload is a PATH; effective endpoint = BASE_URL + path.
     tokenPath = fields.tokenEndpoint;
     treatmentId = fields.treatmentId;
+    scanJobId = fields.scanJobId;
     externalCaseId = fields.externalCaseId;
     payloadFileType = fields.fileType;
 
     reporter.info(`code=${code}`);
     reporter.info(`tokenEndpoint (path)=${tokenPath}`);
     reporter.info(`treatmentId=${treatmentId}`);
+    reporter.info(`scanJobId (case.ID)=${scanJobId}`);
     reporter.info(`externalCaseId=${externalCaseId}`);
     reporter.info(
       payloadFileType === null
@@ -93,6 +98,9 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     if (input.baseUrlOverride) baseUrl = normalizeBaseUrl(input.baseUrlOverride);
     tokenPath = DEFAULT_TOKEN_PATH;
     treatmentId = input.treatmentId ?? null;
+    // No launch payload means no real scan session: this dev path reuses the treatment id as the
+    // case reference and has no case.ID at all, which is why it skips the scan-finish call below.
+    scanJobId = null;
     externalCaseId = input.treatmentId ?? null;
     reporter.info(`code=${code}`);
     reporter.info(`baseUrl=${baseUrl}`);
@@ -157,6 +165,7 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
         filePath: upload.filePath,
         fileName: upload.fileName,
         treatmentId,
+        scanJobId,
         treatmentFileType: upload.treatmentFileType,
         fileTypeSource: upload.fileTypeSource,
         externalCaseId,
@@ -170,7 +179,30 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     }
   }
 
-  const summary = { ok: failures.length === 0, results, failures };
+  // 3) Tell SprintRay the session is over. Only a real Form A launch has a scan session to
+  // finish; Form B has no case.ID, so it reports the step as skipped rather than guessing an id.
+  let completed = null;
+  if (scanJobId) {
+    try {
+      completed = await completeScanJob(reporter, {
+        baseUrl,
+        apiKey: config.apiKey,
+        accessToken: tokens.access_token,
+        scanJobId,
+        externalCaseId,
+      });
+    } catch (err) {
+      // The scans are already up; failing to close the session out is worth reporting, not worth
+      // discarding the uploads over.
+      reporter.fail(err.message);
+      failures.push({ step: 'scan-job/complete', error: err.message });
+    }
+  } else {
+    reporter.phase('complete', 'skipped', 'no scan session (Form B)');
+    reporter.info('Skipping scan-job/complete: this run has no launch payload, so no case.ID.');
+  }
+
+  const summary = { ok: failures.length === 0, results, failures, completed };
   reporter.result(summary);
   return summary;
 }

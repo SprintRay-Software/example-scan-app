@@ -52,16 +52,20 @@ export function createConsoleReporter() {
       if (sent >= total) b.done();
     },
 
-    result: ({ results, failures }) => {
+    result: ({ results, failures, completed }) => {
       console.log('\n──────── summary ────────');
-      info(`uploaded: ${results.length}/1`);
+      // A full-mouth scan uploads both arches, so the count is however many went up.
+      info(`uploaded: ${results.length}`);
       for (const r of results) {
         ok(
           `${r.fileName} — FileType ${r.treatmentFileType} (${fileTypeName(r.treatmentFileType)}) ` +
             `from ${r.fileTypeSource}, ${r.fileSize} bytes`
         );
       }
-      for (const f of failures) fail(`${f.fileName}: ${f.error}`);
+      if (completed) {
+        ok(`scan session finished — scanJobId ${completed.id}, status ${completed.status}`);
+      }
+      for (const f of failures) fail(`${f.fileName ?? f.step}: ${f.error}`);
     },
   });
 }
