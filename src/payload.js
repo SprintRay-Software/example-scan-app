@@ -63,9 +63,12 @@ export function parseLaunchUrl(url) {
  * - auth.code            -> device-login code to exchange
  * - auth.tokenEndpoint   -> PATH (not full URL) of the token endpoint
  * - treatmentId          -> top-level treatment id (the upload target)
- * - externalCaseId       -> top-level external case id used on upload. `case.ID` is the
- *                           scan-job id, so we read the dedicated field and only fall back
- *                           to case.ID for older payloads that carried it there.
+ * - scanJobId            -> `case.ID`: the scan session of THIS launch. Sent on every upload
+ *                           and it is what the scan-finish call keys on.
+ * - externalCaseId       -> top-level external case id used on upload (the correlation key of
+ *                           SprintRay's upload event). A different thing from the scan session:
+ *                           the fall back to case.ID is only for payloads predating the
+ *                           dedicated field.
  * - fileType             -> requested TreatmentFiles type for the upload body; null for a
  *                           full (both-jaw) scan, in which case the per-file default is used.
  */
@@ -88,6 +91,8 @@ export function extractFields(payload) {
     caseObj.id ??
     null;
 
+  const scanJobId = caseObj.ID ?? caseObj.Id ?? caseObj.id ?? null;
+
   const treatmentId = payload.treatmentId ?? payload.TreatmentId ?? payload.treatmentID ?? null;
 
   const rawFileType = payload.fileType ?? payload.FileType ?? null;
@@ -104,6 +109,7 @@ export function extractFields(payload) {
     code,
     tokenEndpoint,
     treatmentId,
+    scanJobId,
     externalCaseId,
     fileType,
   };
