@@ -101,7 +101,7 @@ sequenceDiagram
 | `auth.tokenEndpoint` | token 接口**路径** —— 拼接到后端 origin 之后 |
 | `auth.expiresIn` | code 有效期(秒) |
 | `treatmentId` | 上传的扫描文件要挂载到的 treatment |
-| `externalCaseId` | 外部 case id(上传时作为 `externalCaseId` 传回)。它是 case 引用,**不是**会话标识 —— 两次拉起可能带同一个值,标识会话的是 `case.ID` |
+| `externalCaseId` | 可选的 case 引用;**SprintRay Web 端不下发,通常为 null**。有值时在上传里原样带回。它不是会话标识 —— 两次拉起可能带同一个值 —— 标识会话、可用于关联的只有 `case.ID` |
 
 > `auth`、`treatmentId`、`externalCaseId` 是 SprintRay 的静默鉴权与上传上下文;
 > 其余为标准 ScanPro 启动 payload。
@@ -199,8 +199,9 @@ Content-Type: application/json
 ```
 
 - `scanJobId` 是定位会话的键,就是启动 payload 里的 `case.ID`。
-- 只有在你确实没有保留该 id 时,才可以用 `caseId` **替代** `scanJobId`。它是更弱的键:case id
-  并非每次拉起唯一,SprintRay 会取携带该值的最新会话。
+- 只有在你确实没有保留该 id、且当初拿到过 `externalCaseId` 时,才可以用 `caseId` **替代**
+  `scanJobId` —— SprintRay Web 端并不下发它,通常为 null。而且它本身就是更弱的键:case id
+  并非每次拉起唯一,SprintRay 会取携带该值的最新会话。请保留 `case.ID`,它一定有值。
 - **幂等。** 对已结束的会话再次调用返回 `200` 且不改变任何状态,因此网络出错后重试是安全的。
 - 会话一旦结束就不再接收上传。重扫是一次新的拉起、一个新的会话。
 
