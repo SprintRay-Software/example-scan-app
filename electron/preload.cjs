@@ -18,8 +18,15 @@ contextBridge.exposeInMainWorld('scanpro', {
   // choose a scan file to upload instead of the bundled fixture
   pickFile: () => ipcRenderer.invoke('file:pick'),
 
+  // raw bytes of a bundled scan ('upper' | 'lower') for the demo skin's 3D view — a file://
+  // page cannot read them itself
+  readFixture: (arch) => ipcRenderer.invoke('fixture:read', arch),
+
   // run the device-login + upload flow; events stream via onFlowEvent
   runFlow: (params) => ipcRenderer.invoke('flow:run', params),
+
+  // step out of the way and let the browser back in front (the demo skin's end of a case)
+  hideWindow: () => ipcRenderer.invoke('window:hide'),
 
   // subscribe to streamed flow events; returns an unsubscribe fn
   onFlowEvent: (cb) => {

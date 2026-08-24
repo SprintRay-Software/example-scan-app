@@ -77,6 +77,14 @@ const URL_SCHEME = (ENV.SCANPRO_URL_SCHEME || 'openScanPro').trim();
 
 function defaults() {
   return {
+    // Which skin the window opens in. The demo skin is the default — this app is shown to
+    // integrators far more often than it is debugged — and SCANPRO_UI_MODE=dev is the way a
+    // developer machine skips it without touching the d-d-d-d-d gesture every launch. The shell
+    // wins over .env here so a one-off `SCANPRO_UI_MODE=dev npm run app` does what it looks like.
+    uiMode:
+      (process.env.SCANPRO_UI_MODE ?? ENV.SCANPRO_UI_MODE ?? '').trim().toLowerCase() === 'dev'
+        ? 'dev'
+        : 'demo',
     baseUrl: ENV.SCANPRO_BASE_URL || 'https://apx.sprintray.com',
     apiKey: ENV.SCANPRO_API_KEY || '',
     clientId: ENV.SCANPRO_CLIENT_ID || '',
@@ -165,6 +173,10 @@ function revealWindow(win) {
   if (!win.isVisible()) win.show();
   if (process.platform === 'darwin') {
     app.dock?.show();
+    // app.hide() (how the demo skin steps back to the browser) hides the whole application, and
+    // showing one of its windows does not undo that — app.show() is its counterpart. Without
+    // this, the launch after a return never puts the window back on screen.
+    app.show();
     app.focus({ steal: true });
   }
   win.moveTop();
@@ -407,6 +419,28 @@ ipcMain.handle('file:pick', async () => {
   });
   if (res.canceled || res.filePaths.length === 0) return { canceled: true };
   return { canceled: false, path: res.filePaths[0] };
+});
+
+// The demo skin renders the bundled arches in a WebGL view. The renderer is a file:// page
+// under a strict CSP and cannot read them itself, so the bytes come across IPC.
+ipcMain.handle('fixture:read', (_event, arch) => {
+  const name = arch === 'lower' ? 'lower.stl' : 'upper.stl';
+  try {
+    // Uint8Array survives the structured clone; a Buffer would arrive as one anyway.
+    return { ok: true, bytes: new Uint8Array(readFileSync(join(FIXTURES_DIR, name))) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// "Return to the browser" — what a desktop scanner app does once the case is on its way: get
+// out of the way so whatever the doctor came from is in front again. Hiding the app (macOS) or
+// minimizing the window (Windows/Linux) is what actually puts the previous app back on top;
+// the next launch reveals this one again through revealWindow().
+ipcMain.handle('window:hide', () => {
+  if (process.platform === 'darwin') app.hide();
+  else mainWindow?.minimize();
+  return true;
 });
 
 ipcMain.handle('flow:run', async (event, params) => {

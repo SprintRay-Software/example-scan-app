@@ -8,9 +8,12 @@ end to end before building it into your real desktop scanner app.
 
 It ships two front ends over **one shared, fully-instrumented flow** (`src/core/`):
 
-- a **desktop UI (Electron)** — `npm run app` — that shows the decoded launch payload, a live
-  pipeline of every step, and **every HTTP request and its full response** on the wire, so a tester
-  can watch the whole data flow (see [Desktop UI](#desktop-ui-electron));
+- a **desktop UI (Electron)** — `npm run app` — with two skins: a **demo mode** that waits for a
+  launch, plays a realistic chairside scan of that case, really sends it, and hands the screen back
+  to the browser; and a **developer mode** that shows the
+  decoded launch payload, a live pipeline of every step, and **every HTTP request and its full
+  response** on the wire, so a tester can watch the whole data flow. Press `d` five times to switch
+  (see [Desktop UI](#desktop-ui-electron));
 - a **command-line runner** — `npm start` — same flow, logged to the console.
 
 Both front ends also serve the **local HTTP service on `127.0.0.1`** — the second way the web app
@@ -420,15 +423,48 @@ cp .env.example .env      # fill in origin, client id/secret, scheme
 
 ## Desktop UI (Electron)
 
-The observability-focused way to test the integration. It runs the exact same flow the CLI does, but
-renders it visually so you can watch each step and inspect every byte on the wire.
-
 ```sh
 npm install               # pulls in Electron (a devDependency)
 npm run app               # launch the desktop UI
 ```
 
-The window has three parts:
+The window has **two skins over the same flow**, and **pressing `d` five times** switches between
+them at any time:
+
+| Skin | For | Opens by default |
+|---|---|---|
+| **Demo mode** | showing what the integration looks like to a doctor | yes |
+| **Developer mode** | testing the integration and reading the wire traffic | `SCANPRO_UI_MODE=dev` |
+
+### Demo mode
+
+A stand-in for a real intra-oral scanner app: dark stage, tool rails, live camera preview, scan
+quality legend. It follows **the desktop app's real lifecycle**, the same one the developer skin
+runs on:
+
+1. **Idle.** The window waits, showing which launch transports are live (the URL scheme, and the
+   port the local service is listening on). Nothing scans.
+2. **A launch payload arrives** — the OS URL scheme, or `POST /scanpro/v1/start` on the local
+   service — and the case plays: the upper arch sweeps in under a virtual wand (the bundled STL
+   arches, revealed in scan order, with holes and layering marked on the raw mesh), then the lower
+   arch, then bite registration, then a refine pass that closes the holes and smooths the models.
+   The patient name, case id and selected teeth come from the payload; a payload naming a
+   `fileType` scans only that arch. A launch arriving mid-case restarts on the new one.
+3. **Back to the browser.** Once the case is sent, the card counts down and the app steps out of
+   the way — hidden on macOS, minimized on Windows — so the page the doctor started from is in
+   front again. The next launch brings the window back. A failed send stays on screen instead,
+   until it is dismissed.
+
+**The send is real.** It calls the same `runFlow()` the developer skin does, so with the credentials
+in `.env` set, the case really is exchanged, uploaded and closed out — the progress on the card is
+actual HTTP progress, and the card names the treatment and file sizes the backend accepted. Without
+credentials the card says so and the transfer is simulated.
+
+### Developer mode
+
+The observability-focused way to test the integration. It runs the exact same flow the CLI does, but
+renders it visually so you can watch each step and inspect every byte on the wire. Its window has
+three parts:
 
 - **Left — Configuration & input.** Gateway origin, API key, client id/secret, and URL scheme are prefilled
   from `.env` (editable per run). Paste a `openScanPro://<base64>` **launch URL**, or switch to

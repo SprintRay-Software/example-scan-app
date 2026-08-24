@@ -111,6 +111,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .seg-btn { background: transparent; border: none; color: var(--text-dim); font-size: 12px; padding: 5px 12px; border-radius: 4px; cursor: pointer; }
 .seg-active { background: var(--accent-dim); color: #fff; }
 .mode-pane { display: flex; flex-direction: column; gap: 0; }
+/* The display declaration above outranks the UA's [hidden] rule, so without this the inactive
+   segment's pane stays on screen and the segmented control appears to do nothing. */
+.mode-pane[hidden] { display: none; }
 
 /* buttons */
 .btn { font-family: var(--sans); font-size: 12px; border-radius: 6px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text); }
