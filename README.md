@@ -2,12 +2,13 @@
 
 English | [中文](./README.zh-CN.md)
 
-[![Watch the demo-mode walkthrough](./docs/demo-poster.jpg)](./docs/demo-mode.mp4)
+https://github.com/user-attachments/assets/610cf448-2a9d-47b1-91eb-9036423831a4
 
-**[▶ Watch the walkthrough](./docs/demo-mode.mp4)** (53 s, no audio) — the whole round trip: the
-doctor starts the scan from the web app, this app takes over and scans upper arch, lower arch and
-bite, really sends the case, then steps aside so the browser is back in front with the arches
-uploaded. Scan processing and the upload are sped up; everything else runs at real speed.
+**The whole round trip** (53 s, no audio) — the doctor starts the scan from the web app, this app
+takes over and scans upper arch, lower arch and bite, really sends the case, then steps aside so the
+browser is back in front with the arches uploaded. Scan processing and the upload are sped up;
+everything else runs at real speed. The same file is in the repo, for reading this offline:
+[`docs/demo-mode.mp4`](./docs/demo-mode.mp4).
 
 A reference implementation and **example of the desktop-app side** of SprintRay's
 device-login + scan-upload integration. Use it to understand the flow and to test your integration
