@@ -2,7 +2,7 @@
 
 [English](./README.md) | 中文
 
-https://github.com/user-attachments/assets/610cf448-2a9d-47b1-91eb-9036423831a4
+https://github.com/user-attachments/assets/80a45043-70d4-439b-bcf5-5d6698d452ce
 
 **一个来回全在里面**(53 秒,无声)—— 医生在网页端点开始扫描,本应用接管,依次扫上颌、下颌、
 咬合,真的把这一单发出去,然后主动让位,浏览器回到前台,牙弓已经传上去了。其中扫描处理与上传做了

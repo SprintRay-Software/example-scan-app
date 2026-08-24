@@ -2,7 +2,7 @@
 
 English | [中文](./README.zh-CN.md)
 
-https://github.com/user-attachments/assets/610cf448-2a9d-47b1-91eb-9036423831a4
+https://github.com/user-attachments/assets/80a45043-70d4-439b-bcf5-5d6698d452ce
 
 **The whole round trip** (53 s, no audio) — the doctor starts the scan from the web app, this app
 takes over and scans upper arch, lower arch and bite, really sends the case, then steps aside so the
