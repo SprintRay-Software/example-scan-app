@@ -5,8 +5,275 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
     <title>ScanPro Desktop Integration Simulator</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="demo.css" />
   </head>
   <body>
+    <!-- ===================================================================
+         Demo mode — what the app looks like on a chairside cart: a scanner
+         UI that captures the case and sends it to SprintRay. This is the
+         default skin; press d five times to swap to the developer skin below.
+         =================================================================== -->
+    <div id="demo-root">
+      <!-- icon sprite: every glyph the demo skin draws -->
+      <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+        <defs>
+          <symbol id="ic-ray" viewBox="0 0 24 24">
+            <path d="M12 2v6M12 16v6M2 12h6M16 12h6M5.6 5.6l4.2 4.2M14.2 14.2l4.2 4.2M18.4 5.6l-4.2 4.2M9.8 14.2l-4.2 4.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <symbol id="ic-camera" viewBox="0 0 24 24">
+            <path d="M3 8.5A2 2 0 015 6.5h2l1.2-1.8h7.6L17 6.5h2a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <circle cx="12" cy="12.5" r="3.2" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </symbol>
+          <symbol id="ic-export" viewBox="0 0 24 24">
+            <path d="M12 15V4m0 0L8 8m4-4l4 4M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <symbol id="ic-save" viewBox="0 0 24 24">
+            <path d="M5 4h11l3 3v13H5z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M8 4v5h7V4M8 20v-6h8v6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </symbol>
+          <symbol id="ic-gear" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <symbol id="ic-help" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M9.6 9.4a2.5 2.5 0 114 2c-.9.7-1.6 1.2-1.6 2.4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            <circle cx="12" cy="16.6" r="0.9" fill="currentColor"/>
+          </symbol>
+          <!-- arches: upper (with palate), lower (open U), bite (both) -->
+          <symbol id="ic-arch-upper" viewBox="0 0 32 22">
+            <path d="M4 17C4 8.7 9.4 4 16 4s12 4.7 12 13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+            <path d="M7.5 16.5c0-6 3.9-9.4 8.5-9.4s8.5 3.4 8.5 9.4" stroke="currentColor" stroke-width="1.2" fill="none" opacity="0.55"/>
+          </symbol>
+          <symbol id="ic-arch-lower" viewBox="0 0 32 22">
+            <path d="M4 5c0 8.3 5.4 13 12 13s12-4.7 12-13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <symbol id="ic-arch-bite" viewBox="0 0 32 22">
+            <path d="M5 10.4C5 5.4 9.9 2.6 16 2.6S27 5.4 27 10.4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+            <path d="M5 12.6c0 5 4.9 7.8 11 7.8s11-2.8 11-7.8" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <symbol id="ic-pencil" viewBox="0 0 24 24">
+            <path d="M4 20l3.6-.9L19 7.7a1.8 1.8 0 000-2.6l-.9-.9a1.8 1.8 0 00-2.6 0L4.9 15.7z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </symbol>
+          <!-- left rail -->
+          <symbol id="ic-trim" viewBox="0 0 24 24">
+            <circle cx="6.5" cy="17.5" r="2.4" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <circle cx="17.5" cy="17.5" r="2.4" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M8.3 15.7L18 4M15.7 15.7L6 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <symbol id="ic-lock" viewBox="0 0 24 24">
+            <rect x="5.5" y="10.5" width="13" height="9.5" rx="1.6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </symbol>
+          <symbol id="ic-fill" viewBox="0 0 24 24">
+            <path d="M4 13.5l7-7 7 7-3.5 3.5H7.5z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M18.5 15c1.4 1.9 2 2.9 2 3.6a2 2 0 11-4 0c0-.7.6-1.7 2-3.6z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </symbol>
+          <symbol id="ic-brush" viewBox="0 0 24 24">
+            <path d="M8 14.5l7.7-7.7a2 2 0 012.8 0 2 2 0 010 2.8L10.8 17.3" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M8 14.5c-1.9.6-2.4 2-2.6 3.8-.1.9-.6 1.4-1.4 1.7 1.9 1 4.5.9 5.9-.7 1-1.1 1-2.3.9-2z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </symbol>
+          <symbol id="ic-undo" viewBox="0 0 24 24">
+            <path d="M9 6L4.5 10.5 9 15" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4.5 10.5h9a5.5 5.5 0 010 11H9" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <symbol id="ic-trash" viewBox="0 0 24 24">
+            <path d="M5.5 7.5h13M9.5 7.5V5.2h5v2.3M7 7.5l.9 12h8.2l.9-12" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <!-- right rail -->
+          <symbol id="ic-fit" viewBox="0 0 24 24">
+            <path d="M4 9V4.5h5M20 9V4.5h-5M4 15v4.5h5M20 15v4.5h-5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <symbol id="ic-align" viewBox="0 0 24 24">
+            <path d="M12 3.5v17" stroke="currentColor" stroke-width="1.5" fill="none" stroke-dasharray="2 2.5"/>
+            <rect x="4" y="6.5" width="6" height="4" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <rect x="14" y="13.5" width="6" height="4" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </symbol>
+          <symbol id="ic-link" viewBox="0 0 24 24">
+            <path d="M10.5 13.5a3.5 3.5 0 000 5l1 1a3.5 3.5 0 105-5l-1-1" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            <path d="M13.5 10.5a3.5 3.5 0 000-5l-1-1a3.5 3.5 0 10-5 5l1 1" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          </symbol>
+          <symbol id="ic-mesh" viewBox="0 0 24 24">
+            <path d="M12 3.5l8 4.6v9.2l-8 4.6-8-4.6V8.1z" stroke="currentColor" stroke-width="1.4" fill="none"/>
+            <path d="M12 3.5v17M4 8.1l16 9.2M20 8.1L4 17.3" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+          </symbol>
+          <symbol id="ic-ruler" viewBox="0 0 24 24">
+            <rect x="3" y="8.5" width="18" height="7" rx="1.2" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M7.5 8.5v2.6M12 8.5v3.6M16.5 8.5v2.6" stroke="currentColor" stroke-width="1.3" fill="none"/>
+          </symbol>
+          <symbol id="ic-eye" viewBox="0 0 24 24">
+            <path d="M2.8 12S6.5 6.2 12 6.2 21.2 12 21.2 12 17.5 17.8 12 17.8 2.8 12 2.8 12z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </symbol>
+          <symbol id="ic-warn" viewBox="0 0 24 24">
+            <path d="M12 4l8.5 15H3.5z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/>
+            <path d="M12 9.5v4.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <circle cx="12" cy="16.4" r="0.9" fill="currentColor"/>
+          </symbol>
+          <symbol id="ic-check" viewBox="0 0 24 24">
+            <path d="M5 12.8l4.6 4.4L19 7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          </symbol>
+        </defs>
+      </svg>
+
+      <header class="dm-top">
+        <div class="dm-top-left">
+          <span class="dm-logo"><svg><use href="#ic-ray" /></svg><span>SprintRay</span></span>
+          <span class="dm-expert"><span id="dm-expert-toggle" class="dm-toggle"></span>Expert mode</span>
+        </div>
+
+        <div class="dm-steps">
+          <div class="dm-step" data-step="scan">
+            <span class="dm-step-dot">1</span><span class="dm-step-name">Scan</span>
+          </div>
+          <span class="dm-step-link"></span>
+          <div class="dm-step" data-step="refine">
+            <span class="dm-step-dot">2</span><span class="dm-step-name">Refine</span>
+          </div>
+          <span class="dm-step-link"></span>
+          <div class="dm-step" data-step="finish">
+            <span class="dm-step-dot">3</span><span class="dm-step-name">Finish</span>
+          </div>
+        </div>
+
+        <div class="dm-top-right">
+          <span class="dm-icons">
+            <svg><use href="#ic-camera" /></svg>
+            <svg><use href="#ic-export" /></svg>
+            <svg><use href="#ic-save" /></svg>
+            <svg><use href="#ic-gear" /></svg>
+            <svg><use href="#ic-help" /></svg>
+          </span>
+          <span class="dm-battery">
+            <span class="dm-battery-cell"><span class="dm-battery-fill" style="width: 100%"></span></span>
+            <span>100%</span>
+          </span>
+        </div>
+      </header>
+
+      <div class="dm-stage">
+        <div class="dm-viewport">
+          <canvas id="dm-canvas"></canvas>
+        </div>
+
+        <div class="dm-archbar">
+          <button class="dm-arch-btn" data-arch="upper" type="button"><svg><use href="#ic-arch-upper" /></svg></button>
+          <button class="dm-arch-btn" data-arch="lower" type="button"><svg><use href="#ic-arch-lower" /></svg></button>
+          <button class="dm-arch-btn" data-arch="bite" type="button"><svg><use href="#ic-arch-bite" /></svg></button>
+          <span class="dm-arch-sep"></span>
+          <button class="dm-arch-btn" type="button"><svg><use href="#ic-pencil" /></svg></button>
+        </div>
+
+        <div class="dm-rail dm-rail-left">
+          <span class="dm-tool"><svg><use href="#ic-trim" /></svg></span>
+          <span class="dm-tool"><svg><use href="#ic-lock" /></svg></span>
+          <span class="dm-tool"><svg><use href="#ic-fill" /></svg></span>
+          <span class="dm-tool"><svg><use href="#ic-brush" /></svg></span>
+          <span class="dm-rail-sep"></span>
+          <span class="dm-tool"><svg><use href="#ic-undo" /></svg></span>
+          <span class="dm-tool"><svg><use href="#ic-trash" /></svg></span>
+        </div>
+
+        <div class="dm-rail dm-rail-right">
+          <span class="dm-tool"><svg><use href="#ic-pencil" /></svg></span>
+          <span class="dm-tool"><svg><use href="#ic-fit" /></svg></span>
+          <span class="dm-tool"><svg><use href="#ic-link" /></svg></span>
+          <span class="dm-tool"><svg><use href="#ic-align" /></svg></span>
+          <span class="dm-rail-sep"></span>
+          <span class="dm-tool"><svg><use href="#ic-mesh" /></svg></span>
+          <span class="dm-tool"><svg><use href="#ic-ruler" /></svg></span>
+        </div>
+
+        <div id="dm-case" class="dm-case" hidden>
+          <div class="dm-case-label">Patient</div>
+          <div id="dm-case-name" class="dm-case-name">&mdash;</div>
+          <div class="dm-case-row"><span>Case</span><b id="dm-case-id">&mdash;</b></div>
+          <div class="dm-case-row"><span>Scan</span><b id="dm-case-scan">Full mouth</b></div>
+          <div id="dm-teeth" class="dm-teeth"></div>
+        </div>
+
+        <div id="dm-hud" class="dm-hud">
+          <span class="dm-hud-dot"></span>
+          <span id="dm-hud-arch">Upper arch</span>
+          <span>coverage <b id="dm-hud-cov">0%</b></span>
+          <span>frames <b id="dm-hud-frames">0</b></span>
+          <span><b id="dm-hud-fps">0</b> fps</span>
+          <span id="dm-hud-time">0:00</span>
+        </div>
+
+        <div id="dm-prompt" class="dm-prompt">
+          <div id="dm-prompt-main" class="dm-prompt-main"></div>
+          <div id="dm-prompt-sub" class="dm-prompt-sub"></div>
+        </div>
+
+        <div id="dm-toast" class="dm-toast">
+          <svg><use href="#ic-warn" /></svg><span id="dm-toast-text"></span>
+        </div>
+
+        <div class="dm-bl">
+          <div class="dm-jaw-row">
+            <span class="dm-jaw on"><svg><use href="#ic-arch-upper" /></svg></span>
+            <span class="dm-jaw"><svg><use href="#ic-arch-lower" /></svg></span>
+            <span class="dm-jaw"><svg><use href="#ic-arch-bite" /></svg></span>
+            <span class="dm-jaw"><svg><use href="#ic-eye" /></svg></span>
+          </div>
+
+          <div class="dm-quality">
+            <div class="dm-quality-title">Scan Quality</div>
+            <div class="dm-legend"><span class="dm-swatch" style="background: #33c76b"></span>Holes</div>
+            <div class="dm-legend" style="margin-top: 4px"><span class="dm-swatch" style="background: #3ed7ea"></span>Layering</div>
+            <div class="dm-scale"></div>
+            <div class="dm-scale-labels"><span>Fair</span><span>Poor</span></div>
+          </div>
+
+          <div class="dm-filter">
+            <div class="dm-filter-row">Soft Tissue Filter<span id="dm-soft-toggle" class="dm-toggle on-red"></span></div>
+            <div class="dm-mini-row">
+              <span class="dm-mini"><svg><use href="#ic-arch-upper" /></svg></span>
+              <span class="dm-mini"><svg><use href="#ic-arch-lower" /></svg></span>
+              <span class="dm-mini"><svg><use href="#ic-mesh" /></svg></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="dm-cam">
+          <div class="dm-cam-head">
+            <span class="dm-cam-id"><svg><use href="#ic-camera" /></svg><span id="dm-cam-serial">GHAE0042</span></span>
+            <span class="dm-signal"><i></i><i></i><i></i><i></i></span>
+          </div>
+          <div class="dm-cam-frame">
+            <canvas id="dm-cam-canvas" width="192" height="144"></canvas>
+            <div id="dm-cam-off" class="dm-cam-off">standby</div>
+          </div>
+        </div>
+
+        <!-- boot / refine / send / done all reuse one card -->
+        <div id="dm-overlay" class="dm-overlay" hidden>
+          <div class="dm-card">
+            <div id="dm-ov-mark" class="dm-done-mark" hidden><svg><use href="#ic-check" /></svg></div>
+            <div id="dm-ov-eyebrow" class="dm-card-eyebrow"></div>
+            <div id="dm-ov-title" class="dm-card-title"></div>
+            <div id="dm-ov-sub" class="dm-card-sub"></div>
+            <div id="dm-ov-bar" class="dm-bar" hidden><div id="dm-ov-bar-fill" class="dm-bar-fill"></div></div>
+            <div id="dm-ov-bar-note" class="dm-bar-note" hidden><span id="dm-ov-bar-left"></span><span id="dm-ov-bar-right"></span></div>
+            <div id="dm-ov-tasks" class="dm-tasks"></div>
+            <div id="dm-ov-kv" class="dm-kv" hidden></div>
+            <div id="dm-ov-actions" class="dm-card-actions" hidden>
+              <button id="dm-ov-return" class="dm-btn dm-btn-primary" type="button">Return to browser</button>
+            </div>
+            <div id="dm-ov-foot" class="dm-card-foot" hidden></div>
+          </div>
+        </div>
+
+        <div id="dm-gesture" class="dm-gesture"><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         Developer mode — the instrumented inspector: every step of the
+         desktop-app side of the integration, and every byte on the wire.
+         =================================================================== -->
+    <div id="dev-root" hidden>
     <header class="topbar">
       <div class="brand">
         <span class="brand-title">ScanPro Desktop Integration Simulator</span>
@@ -152,7 +419,10 @@
         </section>
       </section>
     </main>
+    </div>
 
     <script src="app.js"></script>
+    <script src="scan-view.js"></script>
+    <script src="demo.js"></script>
   </body>
 </html>
