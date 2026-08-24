@@ -2,6 +2,13 @@
 
 English | [中文](./README.zh-CN.md)
 
+[![Watch the demo-mode walkthrough](./docs/demo-poster.jpg)](./docs/demo-mode.mp4)
+
+**[▶ Watch the walkthrough](./docs/demo-mode.mp4)** (53 s, no audio) — the whole round trip: the
+doctor starts the scan from the web app, this app takes over and scans upper arch, lower arch and
+bite, really sends the case, then steps aside so the browser is back in front with the arches
+uploaded. Scan processing and the upload are sped up; everything else runs at real speed.
+
 A reference implementation and **example of the desktop-app side** of SprintRay's
 device-login + scan-upload integration. Use it to understand the flow and to test your integration
 end to end before building it into your real desktop scanner app.
@@ -437,6 +444,8 @@ them at any time:
 | **Developer mode** | testing the integration and reading the wire traffic | `SCANPRO_UI_MODE=dev` |
 
 ### Demo mode
+
+This is the skin in the [walkthrough at the top](#sprintray-desktop-scanner-integration--example-app).
 
 A stand-in for a real intra-oral scanner app: dark stage, tool rails, live camera preview, scan
 quality legend. It follows **the desktop app's real lifecycle**, the same one the developer skin
