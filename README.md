@@ -214,9 +214,9 @@ Content-Length: <fileSize>
   and this value is not used. It answers for the case the mapping cannot — a name that is registered but
   not mapped to a file type yet — so send it while you are being onboarded; it stops affecting the
   outcome once your names are mapped.
-- `arch` (optional): **`1` = upper, `2` = lower, `3` = both**. Which arch this file captures. It is
-  what the scan-finish metadata is split by — a file with no `arch` gets no missing-teeth or
-  segmented-teeth metadata attached to it — so send it whenever you know.
+- `arch` (optional): **`1` = upper, `2` = lower**. Which arch this file captures. Omit it for a file
+  that captures no one arch — a bite scan, for instance. It is what the scan-finish metadata is
+  split by, so a file with no `arch` gets no missing-teeth or segmented-teeth metadata attached.
 - Scan files are **STL**.
 
 ### 3. Tell SprintRay the scan session is finished
@@ -475,13 +475,13 @@ Value `62` is unused.
 
 ### `arch` — `ArchType`
 
-Which arch an upload captures (`arch` on the upload call). Optional; omit it when you cannot say.
+Which arch an upload captures (`arch` on the upload call). Optional — omit it for a file that
+captures no one arch, such as a bite scan.
 
 | Value | Meaning |
 |---|---|
 | `1` | upper |
 | `2` | lower |
-| `3` | both |
 
 ### `toothSystem`
 
