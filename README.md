@@ -33,7 +33,7 @@ The CLI and its core are **zero-dependency** (Node.js ≥ 18 built-ins only). El
 
 ## How the integration works
 
-From your desktop app's point of view, there are four steps — **no browser, no re-login, and no
+From your desktop app's point of view, there are five steps — **no browser, no re-login, and no
 token ever travels in the launch URL**:
 
 1. **Launch.** From a treatment page, the SprintRay web app opens your app through its custom URL
@@ -48,6 +48,10 @@ token ever travels in the launch URL**:
    payload's `fileType` is `null`) requests a presigned upload URL for **each** file and PUTs them
    in turn; a payload naming a `fileType` uploads only that arch. Scans attach to the treatment
    automatically.
+5. **Finish.** Call the scan-finish endpoint once, and report along with it what the session
+   captured — scan mode, missing teeth, segmented teeth, which arches. SprintRay answers with
+   presigned links you PUT the segmented-tooth and gingiva meshes to. Every metadata field is
+   optional: reporting nothing still closes the session out, exactly as before.
 
 ### Flow
 
@@ -73,8 +77,12 @@ sequenceDiagram
         App->>S3: PUT raw file bytes
         S3-->>App: 200 / 204
     end
-    App->>BE: scan session finished (scanJobId)
-    BE-->>App: 200
+    App->>BE: scan session finished (id + scan metadata)
+    BE-->>App: 200 + presigned links (segmented teeth, gingiva)
+    opt reported segmented teeth / arches
+        App->>S3: PUT tooth_N.ply + gingiva meshes
+        S3-->>App: 200 / 204
+    end
     BE-->>Web: scan-session status event
     deactivate App
     Note over Doctor,S3: scans are attached to the treatment
@@ -171,7 +179,8 @@ Content-Type: application/json
 
 { "fileName": "upper.stl", "fileSize": 3083734, "treatmentId": "<treatment-id>",
   "scanJobId": "<case.ID from the launch payload>",
-  "treatmentFileType": 1, "externalCaseId": "<external-case-id>" }
+  "treatmentFileType": 1, "arch": 1, "externalScanFileType": "UpperArch",
+  "externalCaseId": "<external-case-id>" }
 ```
 
 `200 →` a presigned upload URL (a JSON string, or `{ "url": "…" }`)
@@ -194,15 +203,32 @@ Content-Length: <fileSize>
   one session, so when the launch payload's `fileType` is `null` (a full-mouth scan) the example app
   uploads **both files in turn** — `upper.stl` (`1`) and `lower.stl` (`2`) — each going through its
   own "presigned URL → PUT" round. When `fileType` names `1` or `2` (a single-arch rescan), only that
-  arch goes up. The value and its source are logged for each upload.
+  arch goes up. The value and its source are logged for each upload. It is now **optional** — see
+  `externalScanFileType` below.
+- `externalScanFileType` (optional): **your own name** for what this file is — `UpperArch`,
+  `LowerJaw`, `BiteScan`, whatever your app already calls it. You do not have to adopt SprintRay's
+  numbering. A name SprintRay has not seen before is registered against your integration on first
+  sight; a SprintRay admin then maps it once to the matching SprintRay file type and/or indication,
+  and from then on an upload carrying only the name is typed automatically after the file lands.
+  Until that mapping exists the file is still stored and still recorded against the session, it
+  simply has no SprintRay file type — so send `treatmentFileType` as well while you are being
+  onboarded, and keep it if you already send it. Casing is not significant when matching, but the
+  first spelling SprintRay sees becomes the stored one, so spell it the same way every time.
+- `arch` (optional): **`1` = upper, `2` = lower, `3` = both**. Which arch this file captures. It is
+  what the scan-finish metadata is split by — a file with no `arch` gets no missing-teeth or
+  segmented-teeth metadata attached to it — so send it whenever you know.
 - Scan files are **STL**.
 
 ### 3. Tell SprintRay the scan session is finished
 
-Call this **once, after your last upload**. Uploading files does not say "the scan is over":
+Call this **once, after your last scan upload**. Uploading files does not say "the scan is over":
 SprintRay sees one upload event per arch and cannot tell "the upper jaw arrived" from "the doctor is
 done scanning". This call is what closes the session out and pushes the event the web app waits on,
 so the doctor's browser can leave the scanning screen.
+
+It is also where you **report what the session captured** — the scan mode, the missing teeth, the
+segmented teeth, which arches — and where SprintRay hands back presigned links for the
+segmented-tooth and gingiva meshes.
 
 ```http
 POST {ORIGIN}/integration/scan-job/complete
@@ -210,31 +236,79 @@ Authorization: Bearer <access_token>
 x-api-key: <your-api-key>
 Content-Type: application/json
 
-{ "scanJobId": "<case.ID from the launch payload>" }
+{
+  "id": "<case.ID from the launch payload>",
+  "scanMode": "quickScan",
+  "hasUpper": true,
+  "hasLower": true,
+  "missingTeeth": [1, 16],
+  "segmentedTeeth": [
+    { "toothNumber": 8, "filename": "tooth_8.ply", "confidence": 0.97 }
+  ]
+}
 ```
 
-`200 →` the finished session:
+`200 →` the finished session, plus one presigned PUT link per mesh you reported:
 
 ```json
 { "id": "<scan-job id>", "treatmentId": "<treatment id or null>", "caseId": "<external case id>",
   "status": 3, "externalProviderId": "scanpro",
   "files": [ { "fileType": 1, "fileGuid": "…", "status": 3 } ],
+  "scanMode": "quickScan", "missingTeeth": [1, 16], "hasUpper": true, "hasLower": true,
+  "segmentedTeethUploadLinks": [ { "toothNumber": 8, "url": "https://…" } ],
+  "gingivaUploadLink": { "upper": "https://…", "lower": "https://…" },
   "createdDate": "2026-08-20T07:31:00Z", "modifiedDate": "2026-08-20T07:36:12Z" }
 ```
 
-- `scanJobId` is the resolution key, and it is simply the launch payload's `case.ID`.
-- `caseId` is accepted **instead** of `scanJobId` only if you did not keep the id, and only if you
-  were given one — SprintRay's web app sends none, so `externalCaseId` is normally null. It is a
-  weaker key regardless: a case id is not unique per launch, so SprintRay resolves the newest
-  session carrying it. Keep `case.ID`; it is always there.
-- **Idempotent.** Calling it again on a finished session returns `200` and changes nothing, so a
-  retry after a network error is safe.
-- Once a session is finished it takes no further uploads. A re-scan is a new launch and a new
-  session.
+- `id` is the resolution key, and it is simply the launch payload's `case.ID`. `scanJobId` is the
+  original name for the same field and is **still accepted**, so a shipped app needs no change; `id`
+  wins if both are sent.
+- `caseId` is accepted **instead** of the id only if you did not keep it, and only if you were given
+  one — SprintRay's web app sends none, so `externalCaseId` is normally null. It is a weaker key
+  regardless: a case id is not unique per launch, so SprintRay resolves the newest session carrying
+  it. Keep `case.ID`; it is always there.
+- **Every metadata field is optional.** A body of just `{ "id": "…" }` finishes the session exactly
+  as it did before — report only what your scanner actually produces.
+- `scanMode`: **your own vocabulary** — `quickScan`, `restorative`, whatever your app calls it, the
+  same arrangement as `externalScanFileType` on the upload. A name SprintRay has not seen is
+  registered against your integration on first sight; casing follows the first spelling, so keep it
+  stable.
+- `missingTeeth` and `segmentedTeeth[].toothNumber` are **universal tooth numbers (1-32)**, always —
+  the launch payload's `toothSystem` governs display only, never this call.
+- `hasUpper` / `hasLower`: whether the session captured each arch. They gate the gingiva links —
+  no `hasLower`, no `gingivaUploadLink.lower`.
+- `segmentedTeeth[]` declares the per-tooth meshes you are **about to** upload: the `toothNumber`,
+  the `filename` you will use, and the segmentation `confidence`. One link comes back per tooth, in
+  `segmentedTeethUploadLinks`.
+- **Idempotent, metadata included.** A retry re-issues links pointing at the **same** objects, so a
+  mesh you already PUT stays where it is; the reported metadata is overwritten, so a same-payload
+  retry converges. Reporting metadata on a session that is already finished works too — submitting
+  the treatment finishes the session on SprintRay's side, and that may beat your call.
+- Once a session is finished it takes no further **scan** uploads. A re-scan is a new launch and a
+  new session. The mesh links from this call keep working (see below).
 
-Errors: `400` neither `scanJobId` nor `caseId` sent · `401` expired/missing access token · `403`
-missing or invalid `x-api-key` · `404` no such session, **or** it belongs to another doctor (the two
-are deliberately indistinguishable).
+Then PUT each mesh to its link:
+
+```http
+PUT <segmentedTeethUploadLinks[].url | gingivaUploadLink.upper | gingivaUploadLink.lower>
+Content-Type: application/octet-stream
+Content-Length: <fileSize>
+
+<raw mesh bytes>
+```
+
+- Same rules as the scan PUT: **no** auth header, `200`/`204` on success. These links expire in
+  **30 minutes** — call the finish endpoint again to get fresh ones for the same objects.
+- The object's extension comes from the `filename` you reported (`tooth_8.ply`). A tooth reported
+  without a filename, and every gingiva mesh, is named by SprintRay and defaults to **`.ply`**.
+- There is **nothing to call after the PUT** — no confirm, no second finish call. These meshes are
+  session metadata, not treatment files: they never attach to the treatment and never show up in the
+  doctor's Cloud Drive.
+
+Errors: `400` no id at all, a tooth number outside 1-32, the same `toothNumber` twice, or a
+`filename` whose extension is not allowed · `401` expired/missing access token · `403` missing or
+invalid `x-api-key` · `404` no such session, **or** it belongs to another doctor (the two are
+deliberately indistinguishable).
 
 ### 4. Read a scan session back (optional)
 
@@ -248,10 +322,13 @@ Authorization: Bearer <access_token>
 x-api-key: <your-api-key>
 ```
 
-`200 →` the same body shape as the finish call. Errors: `401` · `403` · `404` as above.
+`200 →` the same body shape as the finish call, minus the upload links — including the reported
+`scanMode`, `missingTeeth`, `hasUpper` and `hasLower` (null on a session that reported none).
+Errors: `401` · `403` · `404` as above.
 
 `status` values: `1` pulled · `2` transferring · `3` done. Per-file `status`: `1` pending ·
-`2` uploaded · `3` attached to the treatment.
+`2` uploaded · `3` attached to the treatment. A file's `fileType` is `null` when the upload named
+only an `externalScanFileType` that is not mapped yet.
 
 ## Enums
 
@@ -395,6 +472,16 @@ Value `62` is unused.
 | 10 | Base |
 | 11 | Extraction |
 
+### `arch` — `ArchType`
+
+Which arch an upload captures (`arch` on the upload call). Optional; omit it when you cannot say.
+
+| Value | Meaning |
+|---|---|
+| `1` | upper |
+| `2` | lower |
+| `3` | both |
+
 ### `toothSystem`
 
 A string derived from the doctor's tooth-numbering preference (`DentalNotation`):
@@ -403,6 +490,10 @@ A string derived from the doctor's tooth-numbering preference (`DentalNotation`)
 |---|---|
 | `utn` | Universal Tooth Numbering (`DentalNotation.Utn` = 1) — default |
 | `fdi` | FDI World Dental Federation (`DentalNotation.Fdi` = 2) |
+
+This governs how teeth are **displayed** to the doctor. Tooth numbers you send SprintRay —
+`missingTeeth` and `segmentedTeeth[].toothNumber` on the scan-finish call — are always **universal
+(1-32)**, whatever `toothSystem` says.
 
 ### `serverType`
 
@@ -419,6 +510,11 @@ No enum is defined for this yet; it is currently always the fixed value `0`.
 | URL scheme | `SCANPRO_URL_SCHEME` | the scheme your app registers, e.g. `openScanPro` |
 | Telemetry endpoint | `SCANPRO_TELEMETRY_URL` | only for the port-exhaustion event; per environment |
 | Telemetry API key | `SCANPRO_TELEMETRY_API_KEY` | the only credential the telemetry endpoint takes |
+
+Not a credential, but worth asking for at the same time: if you send `externalScanFileType` on
+uploads (and `scanMode` on the scan-finish call), hand SprintRay **the list of names your app uses**
+so an admin can map each one to the matching SprintRay file type / indication. Until a name is
+mapped, files uploaded under it carry no SprintRay file type.
 
 ## Running the example app
 

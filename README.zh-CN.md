@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/80a45043-70d4-439b-bcf5-5d6698d452ce
 
 ## 集成流程
 
-从你的桌面应用视角,共四步 —— **无浏览器、无需重新登录,且 token 绝不出现在启动 URL 中**:
+从你的桌面应用视角,共五步 —— **无浏览器、无需重新登录,且 token 绝不出现在启动 URL 中**:
 
 1. **拉起。** 在 treatment 页面,SprintRay Web 端通过你注册的自定义 URL scheme 拉起你的应用,
    并带上一段 base64 编码的 JSON —— `yourscheme://<base64_json>` —— 其中只含一个**一次性、短时效的 `code`**。
@@ -38,6 +38,9 @@ https://github.com/user-attachments/assets/80a45043-70d4-439b-bcf5-5d6698d452ce
 3. **换取 token。** 通过 HTTPS 把 `code` + 你的客户端凭据 POST 上去,换取已登录医生的 `access_token`。
 4. **上传。** 扫描仪一次就把上下颌都扫完,所以整口扫描(启动 payload 的 `fileType` 为 `null`)会为**两个**文件
    各申请一次预签名上传 URL 并分别 PUT;`fileType` 指定某一颌时只传那一个。扫描文件会自动挂到 treatment 上。
+5. **收尾。** 调用一次扫描结束接口,并随调用上报本次会话扫到了什么 —— 扫描模式、缺失牙位、分割牙齿、
+   扫了哪几颌。SprintRay 会返回一批预签名链接,你把分割牙齿与牙龈网格 PUT 上去即可。所有元数据字段
+   都是可选的:什么都不报,这个调用照旧把会话收尾,与此前完全一致。
 
 ### 流程
 
@@ -63,8 +66,12 @@ sequenceDiagram
         App->>S3: PUT 原始文件字节
         S3-->>App: 200 / 204
     end
-    App->>BE: 本次扫描会话结束（scanJobId）
-    BE-->>App: 200
+    App->>BE: 本次扫描会话结束（id + 扫描元数据）
+    BE-->>App: 200 + 预签名链接（分割牙齿、牙龈）
+    opt 上报了分割牙齿 / 颌位
+        App->>S3: PUT tooth_N.ply + 牙龈网格
+        S3-->>App: 200 / 204
+    end
     BE-->>Web: 扫描会话状态事件
     deactivate App
     Note over Doctor,S3: 扫描文件挂载到 treatment
@@ -158,7 +165,8 @@ Content-Type: application/json
 
 { "fileName": "upper.stl", "fileSize": 3083734, "treatmentId": "<treatment-id>",
   "scanJobId": "<启动 payload 中的 case.ID>",
-  "treatmentFileType": 1, "externalCaseId": "<external-case-id>" }
+  "treatmentFileType": 1, "arch": 1, "externalScanFileType": "UpperArch",
+  "externalCaseId": "<external-case-id>" }
 ```
 
 `200 →` 一个预签名上传 URL(JSON 字符串,或 `{ "url": "…" }`)
@@ -179,14 +187,25 @@ Content-Length: <fileSize>
 - `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。真实扫描仪一次扫完上下颌,因此启动 payload 的 `fileType`
   为 `null`(整口扫描)时,示例应用会**依次上传两个文件** —— `upper.stl`(`1`)与 `lower.stl`(`2`),
   每个文件各走一遍"申请预签名 URL → PUT"。`fileType` 指定为 `1` 或 `2` 时(单颌重扫),只上传对应那一颌。
-  日志中会打印每个文件所用的取值及其来源。
+  日志中会打印每个文件所用的取值及其来源。该字段现在是**可选**的 —— 见下面的 `externalScanFileType`。
+- `externalScanFileType`(可选):**你自己对这个文件的命名** —— `UpperArch`、`LowerJaw`、`BiteScan`,
+  你的应用本来怎么叫就怎么传,不必迁就 SprintRay 的编号。SprintRay 首次见到某个名字时,会把它登记在
+  你这个集成名下;之后由 SprintRay 管理员一次性把它映射到对应的 SprintRay 文件类型和/或 indication,
+  从此只带这个名字上传的文件,在落盘后就会自动被判定类型。映射建立之前,文件照样保存、照样记录在会话上,
+  只是没有 SprintRay 文件类型 —— 所以联调阶段请同时带上 `treatmentFileType`,本来就在传的也请继续保留。
+  匹配时不区分大小写,但 SprintRay 存下来的是它第一次见到的写法,因此每次都用同一种拼写。
+- `arch`(可选):**`1` = 上颌,`2` = 下颌,`3` = 双颌**。这个文件扫的是哪一颌。扫描结束调用上报的元数据
+  正是按它来分配的 —— 没有 `arch` 的文件不会被挂上缺失牙位与分割牙齿信息 —— 所以知道就传。
 - 扫描文件为 **STL** 格式。
 
 ### 3. 告知 SprintRay 本次扫描会话已结束
 
-在**最后一个文件上传完成后调用一次**。上传文件本身并不表示"扫描结束":SprintRay 只能看到每颌各一个
+在**最后一个扫描文件上传完成后调用一次**。上传文件本身并不表示"扫描结束":SprintRay 只能看到每颌各一个
 上传事件,无法区分"上颌到了"与"医生扫完了"。这个调用负责把会话收尾,并推送 Web 端一直在等的事件,
 医生的浏览器据此离开扫描页面。
+
+同时,它也是你**上报本次会话扫到了什么**的地方 —— 扫描模式、缺失牙位、分割牙齿、扫了哪几颌 ——
+SprintRay 则在响应里给出分割牙齿与牙龈网格的预签名上传链接。
 
 ```http
 POST {ORIGIN}/integration/scan-job/complete
@@ -194,27 +213,72 @@ Authorization: Bearer <access_token>
 x-api-key: <your-api-key>
 Content-Type: application/json
 
-{ "scanJobId": "<启动 payload 中的 case.ID>" }
+{
+  "id": "<启动 payload 中的 case.ID>",
+  "scanMode": "quickScan",
+  "hasUpper": true,
+  "hasLower": true,
+  "missingTeeth": [1, 16],
+  "segmentedTeeth": [
+    { "toothNumber": 8, "filename": "tooth_8.ply", "confidence": 0.97 }
+  ]
+}
 ```
 
-`200 →` 结束后的会话:
+`200 →` 结束后的会话,外加你上报的每个网格各一条预签名 PUT 链接:
 
 ```json
 { "id": "<scan-job id>", "treatmentId": "<treatment id 或 null>", "caseId": "<external case id>",
   "status": 3, "externalProviderId": "scanpro",
   "files": [ { "fileType": 1, "fileGuid": "…", "status": 3 } ],
+  "scanMode": "quickScan", "missingTeeth": [1, 16], "hasUpper": true, "hasLower": true,
+  "segmentedTeethUploadLinks": [ { "toothNumber": 8, "url": "https://…" } ],
+  "gingivaUploadLink": { "upper": "https://…", "lower": "https://…" },
   "createdDate": "2026-08-20T07:31:00Z", "modifiedDate": "2026-08-20T07:36:12Z" }
 ```
 
-- `scanJobId` 是定位会话的键,就是启动 payload 里的 `case.ID`。
-- 只有在你确实没有保留该 id、且当初拿到过 `externalCaseId` 时,才可以用 `caseId` **替代**
-  `scanJobId` —— SprintRay Web 端并不下发它,通常为 null。而且它本身就是更弱的键:case id
-  并非每次拉起唯一,SprintRay 会取携带该值的最新会话。请保留 `case.ID`,它一定有值。
-- **幂等。** 对已结束的会话再次调用返回 `200` 且不改变任何状态,因此网络出错后重试是安全的。
-- 会话一旦结束就不再接收上传。重扫是一次新的拉起、一个新的会话。
+- `id` 是定位会话的键,就是启动 payload 里的 `case.ID`。`scanJobId` 是同一个字段的旧名字,**仍然受支持**,
+  已发布的应用无需改动;两者都传时以 `id` 为准。
+- 只有在你确实没有保留该 id、且当初拿到过 `externalCaseId` 时,才可以用 `caseId` **替代**它 ——
+  SprintRay Web 端并不下发它,通常为 null。而且它本身就是更弱的键:case id 并非每次拉起唯一,
+  SprintRay 会取携带该值的最新会话。请保留 `case.ID`,它一定有值。
+- **所有元数据字段都是可选的。** 只传 `{ "id": "…" }` 的请求体,与此前完全一样地结束会话 ——
+  你的扫描仪实际产出什么就报什么。
+- `scanMode`:**用你自己的词汇** —— `quickScan`、`restorative`,你的应用怎么叫就怎么传,与上传调用里的
+  `externalScanFileType` 是同一套约定。SprintRay 首次见到某个名字时会把它登记在你这个集成名下;
+  存下来的是第一次见到的写法,所以请保持稳定。
+- `missingTeeth` 与 `segmentedTeeth[].toothNumber` 一律是**通用牙位编号(Universal,1-32)** ——
+  启动 payload 里的 `toothSystem` 只影响展示,与这个调用无关。
+- `hasUpper` / `hasLower`:本次会话是否扫了对应那一颌。牙龈链接由它们决定 —— 没有 `hasLower`,
+  就没有 `gingivaUploadLink.lower`。
+- `segmentedTeeth[]` 声明的是你**接下来要上传**的逐牙网格:牙位号 `toothNumber`、你将使用的文件名
+  `filename`、以及分割置信度 `confidence`。每颗牙返回一条链接,放在 `segmentedTeethUploadLinks` 里。
+- **幂等,元数据也一样。** 重试会重新签发指向**同一批**对象的链接,已经 PUT 上去的网格不会丢;
+  上报的元数据是覆盖写,所以用同样的请求体重试会收敛到同一结果。对已经结束的会话上报元数据同样有效 ——
+  提交 treatment 会在 SprintRay 侧把会话结束掉,这一步有可能先于你的调用发生。
+- 会话一旦结束就不再接收**扫描文件**上传。重扫是一次新的拉起、一个新的会话。本次调用拿到的网格链接
+  仍然可用(见下)。
 
-错误:`400` 既未传 `scanJobId` 也未传 `caseId` · `401` access token 缺失或过期 · `403` 缺少或
-无效的 `x-api-key` · `404` 会话不存在,**或**属于其他医生(两者故意不作区分)。
+拿到链接后,逐个把网格 PUT 上去:
+
+```http
+PUT <segmentedTeethUploadLinks[].url | gingivaUploadLink.upper | gingivaUploadLink.lower>
+Content-Type: application/octet-stream
+Content-Length: <fileSize>
+
+<原始网格字节>
+```
+
+- 规则与扫描文件的 PUT 相同:**不带**鉴权头,成功返回 `200`/`204`。链接有效期为 **30 分钟** ——
+  过期后再调一次结束接口,即可拿到指向同一批对象的新链接。
+- 对象的扩展名取自你上报的 `filename`(`tooth_8.ply`)。上报时没给文件名的牙齿,以及所有牙龈网格,
+  由 SprintRay 命名,默认使用 **`.ply`**。
+- PUT 之后**不需要再调任何接口** —— 没有 confirm,也不用再调一次结束接口。这些网格属于会话元数据,
+  不是 treatment 文件:它们不会挂到 treatment 上,也不会出现在医生的 Cloud Drive 里。
+
+错误:`400` 完全没传 id、牙位号超出 1-32、同一个 `toothNumber` 出现两次,或 `filename` 的扩展名不被允许 ·
+`401` access token 缺失或过期 · `403` 缺少或无效的 `x-api-key` · `404` 会话不存在,**或**属于其他医生
+(两者故意不作区分)。
 
 ### 4. 读取扫描会话（可选）
 
@@ -227,10 +291,12 @@ Authorization: Bearer <access_token>
 x-api-key: <your-api-key>
 ```
 
-`200 →` 与结束调用相同的响应结构。错误同上:`401` · `403` · `404`。
+`200 →` 与结束调用相同的响应结构,但不含上传链接 —— 包含上报过的 `scanMode`、`missingTeeth`、
+`hasUpper`、`hasLower`(未上报过的会话上这些为 null)。错误同上:`401` · `403` · `404`。
 
 `status` 取值:`1` pulled · `2` transferring · `3` done。文件级 `status`:`1` pending ·
-`2` uploaded · `3` 已挂载到 treatment。
+`2` uploaded · `3` 已挂载到 treatment。当上传只带了尚未映射的 `externalScanFileType` 时,
+该文件的 `fileType` 为 `null`。
 
 ## 枚举
 
@@ -373,6 +439,16 @@ payload 与上传调用中用到的数值枚举。
 | 10 | Base |
 | 11 | Extraction |
 
+### `arch` —— `ArchType`
+
+一次上传扫的是哪一颌(上传调用里的 `arch`)。可选;说不清时就不传。
+
+| 取值 | 含义 |
+|---|---|
+| `1` | 上颌 |
+| `2` | 下颌 |
+| `3` | 双颌 |
+
 ### `toothSystem`
 
 由医生的牙位编号偏好(`DentalNotation`)映射而来的字符串:
@@ -381,6 +457,9 @@ payload 与上传调用中用到的数值枚举。
 |---|---|
 | `utn` | 通用牙位编号 Universal Tooth Numbering(`DentalNotation.Utn` = 1)—— 默认 |
 | `fdi` | FDI 世界牙科联盟编号(`DentalNotation.Fdi` = 2) |
+
+它决定的是牙位**如何展示给医生**。你发给 SprintRay 的牙位号 —— 扫描结束调用里的 `missingTeeth` 与
+`segmentedTeeth[].toothNumber` —— 一律是**通用编号(1-32)**,与 `toothSystem` 无关。
 
 ### `serverType`
 
@@ -397,6 +476,10 @@ payload 与上传调用中用到的数值枚举。
 | URL scheme | `SCANPRO_URL_SCHEME` | 你的应用注册的 scheme,如 `openScanPro` |
 | 遥测接口地址 | `SCANPRO_TELEMETRY_URL` | 仅用于端口耗尽事件;按环境下发 |
 | 遥测 API key | `SCANPRO_TELEMETRY_API_KEY` | 遥测接口唯一的凭据 |
+
+还有一项不属于凭据,但建议一并沟通:如果你在上传时会带 `externalScanFileType`(以及在扫描结束调用里带
+`scanMode`),请把**你的应用会用到的名字清单**提供给 SprintRay,由管理员把每个名字映射到对应的
+SprintRay 文件类型 / indication。名字映射之前,以它上传的文件不带 SprintRay 文件类型。
 
 ## 运行示例应用
 
