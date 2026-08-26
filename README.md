@@ -203,15 +203,17 @@ Content-Length: <fileSize>
   `UpperArch`, `LowerJaw`, `BiteScan`, whatever your app already calls it; you do not have to adopt
   SprintRay's numbering. A name SprintRay has not seen before is registered against your integration
   on first sight, and a SprintRay admin maps it once to the matching SprintRay file type and/or
-  indication — from then on files uploaded under that name are typed automatically once they land.
-  Until a name is mapped the file is still stored and still recorded against the session, it simply
-  carries no SprintRay file type, so hand over
-  [the list of names your app uses](#what-you-need-from-sprintray) during onboarding rather than
-  letting the first upload introduce them. Casing is not significant when matching, but the first
+  indication — from then on that mapping is **what decides the type** of every file uploaded under
+  the name, ahead of any `treatmentFileType` you send. Until a name is mapped the file is still
+  stored and still recorded against the session, it simply carries no SprintRay file type, so hand
+  over [the list of names your app uses](#what-you-need-from-sprintray) during onboarding rather
+  than letting the first upload introduce them. Casing is not significant when matching, but the first
   spelling SprintRay sees is the one it stores — spell it the same way every time.
-- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. Optional, and it takes precedence over
-  the `externalScanFileType` mapping when you do send it — so a file's type is either resolved by
-  SprintRay from the mapping, or named outright by you here.
+- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. Optional, and a **fallback**: when your
+  `externalScanFileType` is mapped to a SprintRay file type, that mapping decides the file's type
+  and this value is not used. It answers for the case the mapping cannot — a name that is registered but
+  not mapped to a file type yet — so send it while you are being onboarded; it stops affecting the
+  outcome once your names are mapped.
 - `arch` (optional): **`1` = upper, `2` = lower, `3` = both**. Which arch this file captures. It is
   what the scan-finish metadata is split by — a file with no `arch` gets no missing-teeth or
   segmented-teeth metadata attached to it — so send it whenever you know.
@@ -325,8 +327,9 @@ x-api-key: <your-api-key>
 Errors: `401` · `403` · `404` as above.
 
 `status` values: `1` pulled · `2` transferring · `3` done. Per-file `status`: `1` pending ·
-`2` uploaded · `3` attached to the treatment. A file's `fileType` is `null` when the upload named
-only an `externalScanFileType` that is not mapped yet.
+`2` uploaded · `3` attached to the treatment. A file's `fileType` is `null` when neither source
+answered: its `externalScanFileType` is not mapped to a file type, and the upload sent no
+`treatmentFileType` either.
 
 ## Enums
 
