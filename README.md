@@ -46,8 +46,8 @@ token ever travels in the launch URL**:
    doctor's `access_token`.
 4. **Upload.** A scanner captures both arches in one session, so a full-mouth scan (the launch
    payload's `fileType` is `null`) requests a presigned upload URL for **each** file and PUTs them
-   in turn; a payload naming a `fileType` uploads only that arch. Scans attach to the treatment
-   automatically.
+   in turn; a payload naming a `fileType` uploads only that arch. Every upload names the scan type
+   it carries (`externalScanFileType`). Scans attach to the treatment automatically.
 5. **Finish.** Call the scan-finish endpoint once, and report along with it what the session
    captured — scan mode, missing teeth, segmented teeth, which arches. SprintRay answers with
    presigned links you PUT the segmented-tooth and gingiva meshes to. Every metadata field is
@@ -72,7 +72,7 @@ sequenceDiagram
     App->>BE: exchange code + client credentials for a token
     BE-->>App: access_token + expires_in
     loop each scan file (full-mouth scan = upper + lower)
-        App->>BE: request presigned upload URL (scanJobId in the body)
+        App->>BE: request presigned upload URL (scanJobId + externalScanFileType in the body)
         BE-->>App: presigned upload URL
         App->>S3: PUT raw file bytes
         S3-->>App: 200 / 204
@@ -199,21 +199,22 @@ Content-Length: <fileSize>
   Send it on every upload — it is what lets SprintRay track the session's progress, and it is the
   only way a launch that carries no treatment gets its uploads recorded at all. `treatmentId` keeps
   its own job of binding the file to the treatment; the two coexist.
-- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. A real scanner captures both arches in
+- `externalScanFileType`: **required on every upload.** Your own name for what this file is —
+  `UpperArch`, `LowerJaw`, `BiteScan`, whatever your app already calls it; you do not have to adopt
+  SprintRay's numbering. A name SprintRay has not seen before is registered against your integration
+  on first sight, and a SprintRay admin maps it once to the matching SprintRay file type and/or
+  indication — from then on files uploaded under that name are typed automatically once they land.
+  Until a name is mapped the file is still stored and still recorded against the session, it simply
+  carries no SprintRay file type, so hand over
+  [the list of names your app uses](#what-you-need-from-sprintray) during onboarding rather than
+  letting the first upload introduce them. Casing is not significant when matching, but the first
+  spelling SprintRay sees is the one it stores — spell it the same way every time.
+- `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. Optional, and it takes precedence over
+  the `externalScanFileType` mapping when you do send it. A real scanner captures both arches in
   one session, so when the launch payload's `fileType` is `null` (a full-mouth scan) the example app
   uploads **both files in turn** — `upper.stl` (`1`) and `lower.stl` (`2`) — each going through its
   own "presigned URL → PUT" round. When `fileType` names `1` or `2` (a single-arch rescan), only that
-  arch goes up. The value and its source are logged for each upload. It is now **optional** — see
-  `externalScanFileType` below.
-- `externalScanFileType` (optional): **your own name** for what this file is — `UpperArch`,
-  `LowerJaw`, `BiteScan`, whatever your app already calls it. You do not have to adopt SprintRay's
-  numbering. A name SprintRay has not seen before is registered against your integration on first
-  sight; a SprintRay admin then maps it once to the matching SprintRay file type and/or indication,
-  and from then on an upload carrying only the name is typed automatically after the file lands.
-  Until that mapping exists the file is still stored and still recorded against the session, it
-  simply has no SprintRay file type — so send `treatmentFileType` as well while you are being
-  onboarded, and keep it if you already send it. Casing is not significant when matching, but the
-  first spelling SprintRay sees becomes the stored one, so spell it the same way every time.
+  arch goes up. The value and its source are logged for each upload.
 - `arch` (optional): **`1` = upper, `2` = lower, `3` = both**. Which arch this file captures. It is
   what the scan-finish metadata is split by — a file with no `arch` gets no missing-teeth or
   segmented-teeth metadata attached to it — so send it whenever you know.
@@ -511,10 +512,10 @@ No enum is defined for this yet; it is currently always the fixed value `0`.
 | Telemetry endpoint | `SCANPRO_TELEMETRY_URL` | only for the port-exhaustion event; per environment |
 | Telemetry API key | `SCANPRO_TELEMETRY_API_KEY` | the only credential the telemetry endpoint takes |
 
-Not a credential, but worth asking for at the same time: if you send `externalScanFileType` on
-uploads (and `scanMode` on the scan-finish call), hand SprintRay **the list of names your app uses**
-so an admin can map each one to the matching SprintRay file type / indication. Until a name is
-mapped, files uploaded under it carry no SprintRay file type.
+Not a credential, but part of the same onboarding, and it goes the other way: `externalScanFileType`
+is required on every upload, so hand SprintRay **the list of names your app uses** — those, plus the
+`scanMode` names — for an admin to map each one to the matching SprintRay file type / indication.
+Until a name is mapped, files uploaded under it carry no SprintRay file type.
 
 ## Running the example app
 

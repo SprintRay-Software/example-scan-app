@@ -37,7 +37,8 @@ https://github.com/user-attachments/assets/80a45043-70d4-439b-bcf5-5d6698d452ce
    (见[启动 payload](#启动-payload))。
 3. **换取 token。** 通过 HTTPS 把 `code` + 你的客户端凭据 POST 上去,换取已登录医生的 `access_token`。
 4. **上传。** 扫描仪一次就把上下颌都扫完,所以整口扫描(启动 payload 的 `fileType` 为 `null`)会为**两个**文件
-   各申请一次预签名上传 URL 并分别 PUT;`fileType` 指定某一颌时只传那一个。扫描文件会自动挂到 treatment 上。
+   各申请一次预签名上传 URL 并分别 PUT;`fileType` 指定某一颌时只传那一个。每次上传都要声明这个文件是什么
+   扫描类型(`externalScanFileType`)。扫描文件会自动挂到 treatment 上。
 5. **收尾。** 调用一次扫描结束接口,并随调用上报本次会话扫到了什么 —— 扫描模式、缺失牙位、分割牙齿、
    扫了哪几颌。SprintRay 会返回一批预签名链接,你把分割牙齿与牙龈网格 PUT 上去即可。所有元数据字段
    都是可选的:什么都不报,这个调用照旧把会话收尾,与此前完全一致。
@@ -61,7 +62,7 @@ sequenceDiagram
     App->>BE: 用 code + 客户端凭据换取 token
     BE-->>App: access_token + expires_in
     loop 每个扫描文件（整口扫描 = 上颌 + 下颌）
-        App->>BE: 申请预签名上传 URL（请求体带 scanJobId）
+        App->>BE: 申请预签名上传 URL（请求体带 scanJobId + externalScanFileType）
         BE-->>App: 预签名上传 URL
         App->>S3: PUT 原始文件字节
         S3-->>App: 200 / 204
@@ -184,16 +185,18 @@ Content-Length: <fileSize>
 - `scanJobId`:即启动 payload 中的 `case.ID`,标识该文件所属的扫描会话。**每次上传都要带上** ——
   SprintRay 靠它跟踪会话进度;对于不携带 treatment 的拉起,这也是其上传能被记录下来的唯一途径。
   `treatmentId` 仍各司其职,负责把文件绑定到 treatment,两者并存。
-- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。真实扫描仪一次扫完上下颌,因此启动 payload 的 `fileType`
+- `externalScanFileType`:**每次上传必传。** 即**你自己对这个文件的命名** —— `UpperArch`、`LowerJaw`、
+  `BiteScan`,你的应用本来怎么叫就怎么传,不必迁就 SprintRay 的编号。SprintRay 首次见到某个名字时,
+  会把它登记在你这个集成名下;之后由 SprintRay 管理员一次性把它映射到对应的 SprintRay 文件类型和/或
+  indication,从此以该名字上传的文件在落盘后就会自动被判定类型。映射建立之前,文件照样保存、照样记录在
+  会话上,只是没有 SprintRay 文件类型 —— 所以请在联调阶段就把**你的应用会用到的名字清单**交给 SprintRay
+  (见〈你需要向 SprintRay 索取的信息〉),而不是等第一次上传把名字带进来。匹配时不区分大小写,
+  但 SprintRay 存下来的是它第一次见到的写法,因此每次都用同一种拼写。
+- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。可选;传了就以它为准,优先于 `externalScanFileType`
+  的映射结果。真实扫描仪一次扫完上下颌,因此启动 payload 的 `fileType`
   为 `null`(整口扫描)时,示例应用会**依次上传两个文件** —— `upper.stl`(`1`)与 `lower.stl`(`2`),
   每个文件各走一遍"申请预签名 URL → PUT"。`fileType` 指定为 `1` 或 `2` 时(单颌重扫),只上传对应那一颌。
-  日志中会打印每个文件所用的取值及其来源。该字段现在是**可选**的 —— 见下面的 `externalScanFileType`。
-- `externalScanFileType`(可选):**你自己对这个文件的命名** —— `UpperArch`、`LowerJaw`、`BiteScan`,
-  你的应用本来怎么叫就怎么传,不必迁就 SprintRay 的编号。SprintRay 首次见到某个名字时,会把它登记在
-  你这个集成名下;之后由 SprintRay 管理员一次性把它映射到对应的 SprintRay 文件类型和/或 indication,
-  从此只带这个名字上传的文件,在落盘后就会自动被判定类型。映射建立之前,文件照样保存、照样记录在会话上,
-  只是没有 SprintRay 文件类型 —— 所以联调阶段请同时带上 `treatmentFileType`,本来就在传的也请继续保留。
-  匹配时不区分大小写,但 SprintRay 存下来的是它第一次见到的写法,因此每次都用同一种拼写。
+  日志中会打印每个文件所用的取值及其来源。
 - `arch`(可选):**`1` = 上颌,`2` = 下颌,`3` = 双颌**。这个文件扫的是哪一颌。扫描结束调用上报的元数据
   正是按它来分配的 —— 没有 `arch` 的文件不会被挂上缺失牙位与分割牙齿信息 —— 所以知道就传。
 - 扫描文件为 **STL** 格式。
@@ -477,9 +480,10 @@ payload 与上传调用中用到的数值枚举。
 | 遥测接口地址 | `SCANPRO_TELEMETRY_URL` | 仅用于端口耗尽事件;按环境下发 |
 | 遥测 API key | `SCANPRO_TELEMETRY_API_KEY` | 遥测接口唯一的凭据 |
 
-还有一项不属于凭据,但建议一并沟通:如果你在上传时会带 `externalScanFileType`(以及在扫描结束调用里带
-`scanMode`),请把**你的应用会用到的名字清单**提供给 SprintRay,由管理员把每个名字映射到对应的
-SprintRay 文件类型 / indication。名字映射之前,以它上传的文件不带 SprintRay 文件类型。
+还有一项不属于凭据,而且方向相反,但属于同一批联调事项:`externalScanFileType` 每次上传必传,
+所以请把**你的应用会用到的名字清单**(连同扫描结束调用里的 `scanMode` 名字)提供给 SprintRay,
+由管理员把每个名字映射到对应的 SprintRay 文件类型 / indication。名字映射之前,以它上传的文件
+不带 SprintRay 文件类型。
 
 ## 运行示例应用
 
