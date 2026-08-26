@@ -210,11 +210,8 @@ Content-Length: <fileSize>
   letting the first upload introduce them. Casing is not significant when matching, but the first
   spelling SprintRay sees is the one it stores — spell it the same way every time.
 - `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. Optional, and it takes precedence over
-  the `externalScanFileType` mapping when you do send it. A real scanner captures both arches in
-  one session, so when the launch payload's `fileType` is `null` (a full-mouth scan) the example app
-  uploads **both files in turn** — `upper.stl` (`1`) and `lower.stl` (`2`) — each going through its
-  own "presigned URL → PUT" round. When `fileType` names `1` or `2` (a single-arch rescan), only that
-  arch goes up. The value and its source are logged for each upload.
+  the `externalScanFileType` mapping when you do send it — so a file's type is either resolved by
+  SprintRay from the mapping, or named outright by you here.
 - `arch` (optional): **`1` = upper, `2` = lower, `3` = both**. Which arch this file captures. It is
   what the scan-finish metadata is split by — a file with no `arch` gets no missing-teeth or
   segmented-teeth metadata attached to it — so send it whenever you know.
