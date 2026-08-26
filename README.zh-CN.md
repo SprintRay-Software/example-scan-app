@@ -188,13 +188,15 @@ Content-Length: <fileSize>
 - `externalScanFileType`:**每次上传必传。** 即**你自己对这个文件的命名** —— `UpperArch`、`LowerJaw`、
   `BiteScan`,你的应用本来怎么叫就怎么传,不必迁就 SprintRay 的编号。SprintRay 首次见到某个名字时,
   会把它登记在你这个集成名下;之后由 SprintRay 管理员一次性把它映射到对应的 SprintRay 文件类型和/或
-  indication,从此以该名字上传的文件在落盘后就会自动被判定类型。映射建立之前,文件照样保存、照样记录在
-  会话上,只是没有 SprintRay 文件类型 —— 所以请在联调阶段就把**你的应用会用到的名字清单**交给 SprintRay
+  indication,从此以该名字上传的文件,其文件类型就**由该映射决定**,优先于你传的 `treatmentFileType`。
+  映射建立之前,文件照样保存、照样记录在会话上,只是没有 SprintRay 文件类型 —— 所以请在联调阶段就把
+  **你的应用会用到的名字清单**交给 SprintRay
   (见〈你需要向 SprintRay 索取的信息〉),而不是等第一次上传把名字带进来。匹配时不区分大小写,
   但 SprintRay 存下来的是它第一次见到的写法,因此每次都用同一种拼写。
-- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。可选;传了就以它为准,优先于 `externalScanFileType`
-  的映射结果 —— 也就是说,文件类型要么由 SprintRay 按 `externalScanFileType` 的映射判定,
-  要么由你在这里直接指定。
+- `treatmentFileType`:**`1` = 上颌,`2` = 下颌**。可选,且只作**兜底**:当你的 `externalScanFileType`
+  已经映射到某个 SprintRay 文件类型时,文件类型由该映射决定,这里传的值不生效。它只负责映射给不出结果
+  的情形 —— 名字已登记、但还没映射到文件类型 —— 所以联调阶段请一并带上;等你的名字都映射好之后,
+  它就不再影响结果了。
 - `arch`(可选):**`1` = 上颌,`2` = 下颌,`3` = 双颌**。这个文件扫的是哪一颌。扫描结束调用上报的元数据
   正是按它来分配的 —— 没有 `arch` 的文件不会被挂上缺失牙位与分割牙齿信息 —— 所以知道就传。
 - 扫描文件为 **STL** 格式。
@@ -296,8 +298,8 @@ x-api-key: <your-api-key>
 `hasUpper`、`hasLower`(未上报过的会话上这些为 null)。错误同上:`401` · `403` · `404`。
 
 `status` 取值:`1` pulled · `2` transferring · `3` done。文件级 `status`:`1` pending ·
-`2` uploaded · `3` 已挂载到 treatment。当上传只带了尚未映射的 `externalScanFileType` 时,
-该文件的 `fileType` 为 `null`。
+`2` uploaded · `3` 已挂载到 treatment。两个来源都给不出结果时,该文件的 `fileType` 为 `null` ——
+即它的 `externalScanFileType` 没有映射到文件类型,上传也没有带 `treatmentFileType`。
 
 ## 枚举
 
