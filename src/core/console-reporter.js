@@ -7,6 +7,7 @@ import { step, ok, fail, info } from '../log.js';
 import { createProgress } from '../progress.js';
 import { createReporter } from './reporter.js';
 import { fileTypeName } from '../payload.js';
+import { describeScanReport } from '../scan-report.js';
 
 export function createConsoleReporter() {
   // One progress renderer per file label, created lazily on the first progress event.
@@ -52,18 +53,25 @@ export function createConsoleReporter() {
       if (sent >= total) b.done();
     },
 
-    result: ({ results, failures, completed }) => {
+    result: ({ results, failures, completed, report, meshes }) => {
       console.log('\n──────── summary ────────');
       // A full-mouth scan uploads both arches, so the count is however many went up.
       info(`uploaded: ${results.length}`);
       for (const r of results) {
         ok(
           `${r.fileName} — FileType ${r.treatmentFileType} (${fileTypeName(r.treatmentFileType)}) ` +
-            `from ${r.fileTypeSource}, ${r.fileSize} bytes`
+            `from ${r.fileTypeSource}, externalScanFileType ${r.externalScanFileType ?? '(none)'}, ` +
+            `${r.fileSize} bytes`
         );
+      }
+      if (report) {
+        info(`reported: ${describeScanReport(report)}`);
       }
       if (completed) {
         ok(`scan session finished — scanJobId ${completed.id}, status ${completed.status}`);
+      }
+      if (meshes?.length) {
+        ok(`meshes uploaded: ${meshes.length} (${meshes.map((m) => m.label).join(', ')})`);
       }
       for (const f of failures) fail(`${f.fileName ?? f.step}: ${f.error}`);
     },

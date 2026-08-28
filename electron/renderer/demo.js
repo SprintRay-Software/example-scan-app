@@ -629,7 +629,7 @@
   function onFlowEvent({ type, payload }) {
     if (!sendUi.active) return;
     if (type === 'phase') {
-      const map = { decode: 'case', exchange: 'auth', refresh: 'auth', link: 'upload', put: 'upload', complete: 'finish' };
+      const map = { decode: 'case', exchange: 'auth', refresh: 'auth', link: 'upload', put: 'upload', complete: 'finish', meshes: 'finish' };
       const id = map[payload.stage];
       if (!id) return;
       if (payload.status === 'error') setTask(id, 'err', payload.detail || 'failed');

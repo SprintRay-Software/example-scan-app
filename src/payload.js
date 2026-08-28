@@ -10,10 +10,35 @@ export const TreatmentFileType = {
   LowerJaw: 2,
 };
 
+// ArchType enum (int) — matches the backend enum. Which arch a file captures, sent as `arch`
+// on the upload. `Both` is for one file carrying the whole mouth; a file that captures no one
+// arch (a bite scan) sends no arch at all.
+export const ArchType = {
+  Upper: 1,
+  Lower: 2,
+  Both: 3,
+};
+
 // Human-readable name for a TreatmentFiles value, for logging (e.g. 1 -> "UpperJaw").
 export function fileTypeName(value) {
   const name = Object.keys(TreatmentFileType).find((k) => TreatmentFileType[k] === Number(value));
   return name ?? 'unknown';
+}
+
+// Human-readable name for an ArchType value, for logging (e.g. 1 -> "Upper").
+export function archName(value) {
+  const name = Object.keys(ArchType).find((k) => ArchType[k] === Number(value));
+  return name ?? 'unknown';
+}
+
+/**
+ * The arch a single-jaw scan captures. Only the two jaw file types map to one — anything else
+ * captures no single arch, and its upload sends no `arch`.
+ */
+export function archForFileType(value) {
+  if (Number(value) === TreatmentFileType.UpperJaw) return ArchType.Upper;
+  if (Number(value) === TreatmentFileType.LowerJaw) return ArchType.Lower;
+  return null;
 }
 
 /**

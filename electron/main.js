@@ -450,6 +450,14 @@ ipcMain.handle('flow:run', async (event, params) => {
     apiKey: String(rawConfig.apiKey || '').trim(),
     clientId: String(rawConfig.clientId || '').trim(),
     clientSecret: String(rawConfig.clientSecret || '').trim(),
+    // The integration's scan vocabulary comes from the .env, not from the renderer: it belongs
+    // to the integration rather than to a run, so there is no UI field for it. Unset is fine —
+    // the flow falls back to this example's own default names.
+    scanMode: (ENV.SCANPRO_SCAN_MODE || '').trim() || undefined,
+    scanFileTypes: {
+      upper: (ENV.SCANPRO_SCAN_FILE_TYPE_UPPER || '').trim() || undefined,
+      lower: (ENV.SCANPRO_SCAN_FILE_TYPE_LOWER || '').trim() || undefined,
+    },
   };
 
   const send = (type, payload) => {

@@ -451,6 +451,10 @@ payload 与上传调用中用到的数值枚举。
 |---|---|
 | `1` | 上颌 |
 | `2` | 下颌 |
+| `3` | 双颌 —— 一个文件承载整口 |
+
+一颌一个文件的扫描仪只会用到 `1` 和 `2`。`3` 用于单个文件同时承载上下颌:结束调用下发的元数据里,
+`1` 只拿 1-16、`2` 只拿 17-32,而 `3` 拿**整套** 1-32。
 
 ### `toothSystem`
 
@@ -538,8 +542,8 @@ npm run app               # 启动桌面 UI
   粘贴 `openScanPro://<base64>` **启动 URL**,或切到 **Manual code** 用显式 `code` + treatment id 运行;
   还可分别为上颌、下颌指定自定义扫描文件,并勾选是否额外走 token 刷新步骤。
 - **右侧 —— 观测区。**
-  - **Pipeline** —— 桌面应用侧的步骤按序展示(解析 → 换 token → 可选刷新 → 预签名 URL → S3 PUT),
-    每步显示实时状态与一行摘要。
+  - **Pipeline** —— 桌面应用侧的步骤按序展示(解析 → 换 token → 可选刷新 → 预签名 URL → S3 PUT →
+    结束会话 → PUT 牙齿/牙龈网格),每步显示实时状态与一行摘要。
   - **Decoded launch payload** —— 解析出的字段(`code`、`tokenEndpoint`、`treatmentId`、
     `externalCaseId`、`fileType`)以及完整的解码 JSON;**Decode payload** 可在不发起网络请求的情况下预览。
   - **HTTP transactions** —— 每次调用一张可展开的卡片,包含**完整 request**(method、URL、headers、body)
@@ -578,14 +582,35 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 追加 `--demo-refresh` 可一并演示 token 刷新接口;`--upper-file <p>` / `--lower-file <p>` 可替换某一颌
 要上传的文件。
 
+结束调用上报的扫描信息,默认由本次运行实际上传的颌位推导得出,每一部分都可以覆盖:
+
+| 参数 | 作用 |
+|---|---|
+| `--scan-mode <name>` | 上报的 `scanMode`(默认取 `$SCANPRO_SCAN_MODE`,否则 `quickScan`) |
+| `--missing-teeth 1,16` | 上报的 `missingTeeth`,通用牙位编号(默认:没有缺失牙) |
+| `--segmented-teeth 8,9` | 上报并上传的牙位 —— 传 `none` 表示一颗都不报(默认:所报颌位中除缺失牙以外的全部牙位) |
+| `--no-metadata` | 什么都不报:结束调用只带 id,与这套契约之前写好的客户端行为一致 |
+| `--upper-scan-type <n>` / `--lower-scan-type <n>` | 各颌上传时发送的 `externalScanFileType`(默认取 `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER`,否则 `UpperArch` / `LowerArch`) |
+| `--tooth-file <p>` / `--gingiva-file <p>` | PUT 到每个返回链接的网格文件(默认 `fixtures/tooth.ply` / `fixtures/gingiva.ply`) |
+
+因此,一次不带任何参数的整口运行会上报双颌、32 颗分割牙、无缺失牙 —— 换回 34 个预签名链接,
+随后是 34 次 PUT。想快速看完整流程又不想等,用 `--segmented-teeth none`:只剩两个牙龈网格。
+
 ### 它做了什么
 
 每次运行会:换取 token,然后按扫描仪的真实行为上传 —— 整口扫描(`fileType` 为 `null`)依次上传
 `fixtures/upper.stl` 与 `fixtures/lower.stl` 两个文件,`fileType` 指定某一颌时只上传那一个 —— 
-每个文件都带实时进度条。最后一个文件上传完成后会发起扫描结束调用,让整个流程与真实会话一致。
-形式 B(`--code`,无启动 URL)没有 `case.ID`,也就没有会话可结束,该步骤会标记为 skipped。
+每个文件都带实时进度条,并且都会带上这个文件的扫描类型(`externalScanFileType`)和所属颌位(`arch`)。
+
+最后一个文件上传完成后会发起扫描结束调用,并上报本次会话扫到了什么:扫描模式、哪几颌、分割出的牙齿、
+缺失的牙齿。SprintRay 会按每颗分割牙一条、每个已扫颌位的牙龈一条返回预签名链接,本应用逐个 PUT 上去 ——
+整个流程与真实会话完全一致。这些网格属于会话元数据:PUT 之后没有任何后续调用,也不会出现在医生的
+Cloud Drive 里。形式 B(`--code`,无启动 URL)没有 `case.ID`,也就没有会话可结束,这两步都会标记为
+skipped。
+
 **每个后端请求与响应都会被完整打印**(方法、URL、请求头、请求体 / 状态码、响应头、响应体),
-让你清楚地看到该发送什么、该期望什么。把 `fixtures/` 里的文件替换成你自己的扫描件即可测试其它数据。
+让你清楚地看到该发送什么、该期望什么。把 `fixtures/` 里的文件替换成你自己的扫描件即可测试其它数据 ——
+`upper.stl` / `lower.stl` 是两颌扫描件,`tooth.ply` / `gingiva.ply` 则是逐牙网格与牙龈网格的替身。
 
 ## 本机 HTTP 服务(`127.0.0.1`)
 

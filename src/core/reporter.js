@@ -11,8 +11,8 @@
 // cares about; missing ones are filled with no-ops so callers never have to guard.
 const METHODS = [
   // pipeline stage lifecycle — (stage, status, detail?)
-  // stage:  'decode' | 'exchange' | 'refresh' | 'link' | 'put'
-  // status: 'active' | 'done' | 'error'
+  // stage:  'decode' | 'exchange' | 'refresh' | 'link' | 'put' | 'complete' | 'meshes'
+  // status: 'active' | 'done' | 'error' | 'skipped'
   'phase',
   // narrated log lines (mirror the CLI's step/ok/fail/info)
   'step',
@@ -31,7 +31,7 @@ const METHODS = [
   'httpError',
   // upload progress — ({ label, sent, total, pct })
   'progress',
-  // final summary — ({ ok, results, failures })
+  // final summary — ({ ok, results, failures, completed, report, meshes })
   'result',
 ];
 

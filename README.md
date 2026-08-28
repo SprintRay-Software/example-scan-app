@@ -482,6 +482,11 @@ captures no one arch, such as a bite scan.
 |---|---|
 | `1` | upper |
 | `2` | lower |
+| `3` | both — one file carrying the whole mouth |
+
+A scanner that sends one file per jaw only ever needs `1` and `2`. `3` is for a single file that
+carries both arches; it is the value that takes the **whole** 1-32 metadata set from the finish
+call, where `1` takes 1-16 and `2` takes 17-32.
 
 ### `toothSystem`
 
@@ -579,7 +584,8 @@ three parts:
   for the upper and lower arch separately, and toggle the token-refresh step.
 - **Right — Observability.**
   - **Pipeline** — the desktop-app steps in order (decode → exchange → optional refresh → presigned
-    URL → S3 PUT), each showing live status and a one-line detail.
+    URL → S3 PUT → finish the session → PUT the tooth/gingiva meshes), each showing live status and
+    a one-line detail.
   - **Decoded launch payload** — the extracted fields (`code`, `tokenEndpoint`, `treatmentId`,
     `externalCaseId`, `fileType`) plus the full decoded JSON. **Decode payload** shows this without
     touching the network.
@@ -623,16 +629,40 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 Add `--demo-refresh` to also exercise the token-refresh endpoint; `--upper-file <p>` / `--lower-file <p>`
 swap the file sent for either arch.
 
+The scan report the finish call sends is derived from the arches the run uploaded, and every part
+of it can be overridden:
+
+| Flag | What it changes |
+|---|---|
+| `--scan-mode <name>` | the reported `scanMode` (default `$SCANPRO_SCAN_MODE`, else `quickScan`) |
+| `--missing-teeth 1,16` | reported `missingTeeth`, universal numbering (default: none) |
+| `--segmented-teeth 8,9` | the teeth reported and uploaded — `none` reports zero (default: every tooth of the captured arches that is not missing) |
+| `--no-metadata` | report nothing at all: the finish call sends the id alone, the way a client written before this contract does |
+| `--upper-scan-type <n>` / `--lower-scan-type <n>` | the `externalScanFileType` sent for each arch (default `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER`, else `UpperArch` / `LowerArch`) |
+| `--tooth-file <p>` / `--gingiva-file <p>` | the mesh PUT to each returned link (default `fixtures/tooth.ply` / `fixtures/gingiva.ply`) |
+
+A full-mouth run with no flags therefore reports both arches, 32 segmented teeth and no missing
+ones — which comes back as 34 presigned links, and 34 PUTs. `--segmented-teeth none` is the
+quickest way to watch the same flow with two gingiva meshes and nothing else.
+
 ### What it does
 
 Each run exchanges the code, then uploads the way the scanner really does — a full-mouth scan
 (`fileType` is `null`) sends `fixtures/upper.stl` and `fixtures/lower.stl` in turn, and a payload
-naming an arch sends only that one — each with a live progress bar. After the last upload it makes
-the scan-finish call, so the run ends the way a real session does. Form B (`--code`, no launch URL)
-has no `case.ID`, so there is no session to finish and that step reports as skipped.
+naming an arch sends only that one — each with a live progress bar, and each naming the scan type
+it carries (`externalScanFileType`) and the arch it captures.
+
+After the last upload it makes the scan-finish call, reporting what the session captured: the scan
+mode, which arches, the segmented teeth and the missing ones. SprintRay answers with one presigned
+link per segmented tooth plus one per arch's gingiva, and the run PUTs a mesh to each — so it ends
+exactly the way a real session does. Those meshes are session metadata: nothing is called after the
+PUT, and they never appear in the doctor's Cloud Drive. Form B (`--code`, no launch URL) has no
+`case.ID`, so there is no session to finish and both steps report as skipped.
+
 **Every backend request and response is logged in full** (method, URL, headers, body / status,
 headers, body) so you can see exactly what to send and what to expect. Swap the files in `fixtures/`
-to upload your own scans.
+to upload your own scans — `upper.stl` / `lower.stl` are the arches, `tooth.ply` / `gingiva.ply`
+stand in for the per-tooth and gingiva meshes.
 
 ## Local HTTP service (`127.0.0.1`)
 
