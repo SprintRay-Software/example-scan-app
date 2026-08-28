@@ -208,7 +208,9 @@ Content-Length: <fileSize>
   stored and still recorded against the session, it simply carries no SprintRay file type, so hand
   over [the list of names your app uses](#what-you-need-from-sprintray) during onboarding rather
   than letting the first upload introduce them. Casing is not significant when matching, but the first
-  spelling SprintRay sees is the one it stores — spell it the same way every time.
+  spelling SprintRay sees is the one it stores — spell it the same way every time. (The field is not
+  enforced with a `400` — an upload without it succeeds, so that clients written before this contract
+  keep working. It is required of *your* integration: without it nothing can map the file's type.)
 - `treatmentFileType`: **`1` = upper jaw, `2` = lower jaw**. Optional, and a **fallback**: when your
   `externalScanFileType` is mapped to a SprintRay file type, that mapping decides the file's type
   and this value is not used. It answers for the case the mapping cannot — a name that is registered but
