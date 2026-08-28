@@ -20,7 +20,13 @@ import { exchangeCodeForTokens, refreshTokens } from '../auth.js';
 import { uploadFixture } from '../upload.js';
 import { completeScanJob } from '../complete.js';
 import { uploadScanArtifacts } from '../artifacts.js';
+import { mapWithConcurrency, toPositiveInt } from './concurrency.js';
+import { createBufferingReporter } from './reporter.js';
 import { buildScanReport, describeScanReport, DEFAULT_SCAN_MODE, DEFAULT_SCAN_FILE_TYPES } from '../scan-report.js';
+
+// Files go up concurrently. This is how many at once when nothing overrides it — a run only ever
+// has two scans, so it is the mesh batch (up to 34 PUTs) that this number is really for.
+export const DEFAULT_UPLOAD_CONCURRENCY = 4;
 
 // Fallback only. Form A always takes the path from the launch payload's auth.tokenEndpoint —
 // that field exists so SprintRay can move the route without a desktop-app release.
@@ -77,14 +83,15 @@ function buildUpload(treatmentFileType, fileTypeSource, input, fixturesDir, voca
  *
  * @param {import('./reporter.js').createReporter} reporter
  * @param {object} opts
- * @param {{ baseUrl: string, apiKey: string, clientId: string, clientSecret: string }} opts.config
+ * @param {{ baseUrl: string, apiKey: string, clientId: string, clientSecret: string,
+ *           uploadConcurrency?: number }} opts.config
  * @param {object} opts.input
  *   Form A: { launchUrl }
  *   Form B: { code, baseUrlOverride?, treatmentId? }
  *   both:   { demoRefresh?, upperFileOverride?, lowerFileOverride?,
  *             scanMode?, upperScanFileType?, lowerScanFileType?,
  *             missingTeeth?, segmentedTeeth?, noMetadata?,
- *             toothFileOverride?, gingivaFileOverride? }
+ *             toothFileOverride?, gingivaFileOverride?, concurrency? }
  * @param {string} opts.fixturesDir  where upper.stl / lower.stl and the tooth.ply / gingiva.ply
  *                                    meshes live
  * @returns {Promise<{ ok: boolean, results: object[], failures: object[],
@@ -194,11 +201,27 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
   const results = [];
   const failures = [];
 
-  // Sequential, not parallel: the progress bar and the per-request transaction log are the
-  // whole point of this app, and two uploads racing would interleave both into noise.
-  for (const upload of uploads) {
-    try {
-      const r = await uploadFixture(reporter, {
+  // Concurrent, not sequential: a session captures both arches and there is no reason for the
+  // lower jaw to wait behind the upper — each file's link request and its S3 PUT are independent
+  // of the other's. What must NOT interleave is the narration, since the per-request transaction
+  // log is the whole point of this app: every file reports into its own buffer, and the pool
+  // replays them in list order as they settle, so the log still reads one file at a time while
+  // the bytes overlap on the wire.
+  const concurrency = toPositiveInt(
+    input.concurrency,
+    toPositiveInt(config.uploadConcurrency, DEFAULT_UPLOAD_CONCURRENCY)
+  );
+  if (uploads.length > 1) {
+    reporter.info(`Uploading up to ${concurrency} file(s) at a time`);
+  }
+
+  const uploadTasks = uploads.map((upload) => ({ upload, buffered: createBufferingReporter(reporter) }));
+
+  await mapWithConcurrency(
+    uploadTasks,
+    concurrency,
+    ({ upload, buffered }) =>
+      uploadFixture(buffered.reporter, {
         baseUrl,
         apiKey: config.apiKey,
         accessToken: tokens.access_token,
@@ -211,15 +234,20 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
         externalScanFileType: upload.externalScanFileType,
         arch: upload.arch,
         externalCaseId,
-      });
-      results.push(r);
-    } catch (err) {
+      }),
+    (outcome, { upload, buffered }) => {
+      buffered.flush();
+      if (outcome.status === 'fulfilled') {
+        results.push(outcome.value);
+        return;
+      }
       // Keep going: one arch failing should still get the other one up, and the summary
       // reports exactly which succeeded.
-      reporter.fail(`Upload failed for ${upload.fileName}: ${err.message}`);
-      failures.push({ fileName: upload.fileName, error: err.message });
+      const message = outcome.reason?.message ?? String(outcome.reason);
+      reporter.fail(`Upload failed for ${upload.fileName}: ${message}`);
+      failures.push({ fileName: upload.fileName, error: message });
     }
-  }
+  );
 
   // 3) Tell SprintRay the session is over, and report what it captured. Only a real Form A
   // launch has a scan session to finish; Form B has no case.ID, so it reports the step as
@@ -265,6 +293,7 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     if (completed) {
       const artifacts = await uploadScanArtifacts(reporter, {
         job: completed,
+        concurrency,
         toothFilePath: input.toothFileOverride
           ? resolve(input.toothFileOverride)
           : resolve(fixturesDir, 'tooth.ply'),

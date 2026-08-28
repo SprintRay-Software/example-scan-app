@@ -46,7 +46,8 @@ token ever travels in the launch URL**:
    doctor's `access_token`.
 4. **Upload.** A scanner captures both arches in one session, so a full-mouth scan (the launch
    payload's `fileType` is `null`) requests a presigned upload URL for **each** file and PUTs them
-   in turn; a payload naming a `fileType` uploads only that arch. Every upload names the scan type
+   — nothing orders one file behind another, so send them concurrently; a payload naming a
+   `fileType` uploads only that arch. Every upload names the scan type
    it carries (`externalScanFileType`). Scans attach to the treatment automatically.
 5. **Finish.** Call the scan-finish endpoint once, and report along with it what the session
    captured — scan mode, missing teeth, segmented teeth, which arches. SprintRay answers with
@@ -71,7 +72,7 @@ sequenceDiagram
     App->>App: base64-decode payload, read code + tokenEndpoint
     App->>BE: exchange code + client credentials for a token
     BE-->>App: access_token + expires_in
-    loop each scan file (full-mouth scan = upper + lower)
+    loop each scan file, in parallel (full-mouth scan = upper + lower)
         App->>BE: request presigned upload URL (scanJobId + externalScanFileType in the body)
         BE-->>App: presigned upload URL
         App->>S3: PUT raw file bytes
@@ -80,7 +81,7 @@ sequenceDiagram
     App->>BE: scan session finished (id + scan metadata)
     BE-->>App: 200 + presigned links (segmented teeth, gingiva)
     opt reported segmented teeth / arches
-        App->>S3: PUT tooth_N.ply + gingiva meshes
+        App->>S3: PUT tooth_N.ply + gingiva meshes (in parallel)
         S3-->>App: 200 / 204
     end
     BE-->>Web: scan-session status event
@@ -220,6 +221,10 @@ Content-Length: <fileSize>
   that captures no one arch — a bite scan, for instance. It is what the scan-finish metadata is
   split by, so a file with no `arch` gets no missing-teeth or segmented-teeth metadata attached.
 - Scan files are **STL**.
+- **Files are independent of each other.** A link request and its PUT concern one file only, and
+  nothing in the contract orders them, so send as many at once as your uplink is happy with —
+  the two arches of a full-mouth session together, and the mesh links below in batches. The only
+  ordering the contract does impose is the finish call, which comes after your last scan upload.
 
 ### 3. Tell SprintRay the scan session is finished
 
@@ -629,7 +634,8 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 ```
 
 Add `--demo-refresh` to also exercise the token-refresh endpoint; `--upper-file <p>` / `--lower-file <p>`
-swap the file sent for either arch.
+swap the file sent for either arch. `--concurrency <n>` sets how many files go up at once
+(default `$SCANPRO_UPLOAD_CONCURRENCY`, else 4; `--concurrency 1` sends them one at a time).
 
 The scan report the finish call sends is derived from the arches the run uploaded, and every part
 of it can be overridden:
@@ -650,14 +656,18 @@ quickest way to watch the same flow with two gingiva meshes and nothing else.
 ### What it does
 
 Each run exchanges the code, then uploads the way the scanner really does — a full-mouth scan
-(`fileType` is `null`) sends `fixtures/upper.stl` and `fixtures/lower.stl` in turn, and a payload
-naming an arch sends only that one — each with a live progress bar, and each naming the scan type
-it carries (`externalScanFileType`) and the arch it captures.
+(`fileType` is `null`) sends `fixtures/upper.stl` and `fixtures/lower.stl` at the same time, and a
+payload naming an arch sends only that one — under one progress bar covering the batch, and each
+naming the scan type it carries (`externalScanFileType`) and the arch it captures.
+
+Uploads run concurrently, but the log does not interleave: each file narrates into its own buffer
+and is printed as one block, in file order, so the transaction log still reads one file at a time
+while the bytes overlap on the wire.
 
 After the last upload it makes the scan-finish call, reporting what the session captured: the scan
 mode, which arches, the segmented teeth and the missing ones. SprintRay answers with one presigned
-link per segmented tooth plus one per arch's gingiva, and the run PUTs a mesh to each — so it ends
-exactly the way a real session does. Those meshes are session metadata: nothing is called after the
+link per segmented tooth plus one per arch's gingiva, and the run PUTs a mesh to each, several at
+a time — so it ends exactly the way a real session does. Those meshes are session metadata: nothing is called after the
 PUT, and they never appear in the doctor's Cloud Drive. Form B (`--code`, no launch URL) has no
 `case.ID`, so there is no session to finish and both steps report as skipped.
 

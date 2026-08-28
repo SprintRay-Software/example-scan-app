@@ -610,7 +610,9 @@
     { id: 'finish', label: 'Closing the scan session' },
   ];
 
-  const sendUi = { active: false, uploadTotal: 0, uploadIndex: 0 };
+  // `files` is the live per-file byte count: uploads overlap, so the bar is driven by their sum
+  // rather than by whichever file reported last.
+  const sendUi = { active: false, uploadTotal: 0, uploadIndex: 0, files: new Map() };
 
   function openSendCard(info, arches, note) {
     overlay({
@@ -623,6 +625,7 @@
     });
     sendUi.uploadTotal = arches.length;
     sendUi.uploadIndex = 0;
+    sendUi.files.clear();
   }
 
   /** Every flow event during a demo send, rendered as the doctor-facing card. */
@@ -642,11 +645,18 @@
       return;
     }
     if (type === 'progress') {
-      // One bar across the whole upload, so two arches read as one transfer.
-      const per = 100 / Math.max(1, sendUi.uploadTotal);
-      const pct = sendUi.uploadIndex * per + (payload.pct / 100) * per;
-      setBar(pct, payload.label, `${fmtBytes(payload.sent)} / ${fmtBytes(payload.total)}`);
-      setTask('upload', 'active', `${sendUi.uploadIndex + 1}/${sendUi.uploadTotal}`);
+      // One bar across the whole upload, so arches sent at the same time read as one transfer.
+      sendUi.files.set(payload.label, { sent: payload.sent, total: payload.total });
+      let sent = 0;
+      let total = 0;
+      for (const f of sendUi.files.values()) {
+        sent += f.sent;
+        total += f.total;
+      }
+      const pct = total > 0 ? Math.min(100, (sent / total) * 100) : 0;
+      const label = sendUi.files.size === 1 ? payload.label : `${sendUi.files.size} files`;
+      setBar(pct, label, `${fmtBytes(sent)} / ${fmtBytes(total)}`);
+      setTask('upload', 'active', `${Math.min(sendUi.uploadIndex + 1, sendUi.uploadTotal)}/${sendUi.uploadTotal}`);
     }
   }
 

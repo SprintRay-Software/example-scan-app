@@ -2,58 +2,57 @@
 // original simulator's output: timestamped step/ok/fail/info lines, full request/response
 // dumps, and an adaptive upload progress bar. Pipeline `phase` events are ignored here
 // because the step() lines already narrate the flow for a console reader.
+//
+// Uploads run concurrently, so one progress group covers the whole batch, and every other
+// line closes the live bar first instead of printing over it.
 
 import { step, ok, fail, info } from '../log.js';
-import { createProgress } from '../progress.js';
+import { createProgressGroup } from '../progress.js';
 import { createReporter } from './reporter.js';
 import { fileTypeName } from '../payload.js';
 import { describeScanReport } from '../scan-report.js';
 
 export function createConsoleReporter() {
-  // One progress renderer per file label, created lazily on the first progress event.
-  const bars = new Map();
-  function bar(label) {
-    let b = bars.get(label);
-    if (!b) {
-      b = createProgress(label);
-      bars.set(label, b);
-    }
-    return b;
-  }
+  // One renderer for every file in flight — see createProgressGroup.
+  const progressBar = createProgressGroup();
+
+  // Anything that is not the progress bar takes the line back first.
+  const line =
+    (write) =>
+    (...args) => {
+      progressBar.interrupt();
+      write(...args);
+    };
 
   return createReporter({
-    step: (msg) => step(msg),
-    ok: (msg) => ok(msg),
-    fail: (msg) => fail(msg),
-    info: (msg) => info(msg),
+    step: line(step),
+    ok: line(ok),
+    fail: line(fail),
+    info: line(info),
 
-    httpStart: ({ label, method, url, headers, body, bodyNote }) => {
+    httpStart: line(({ label, method, url, headers, body, bodyNote }) => {
       info(`> REQUEST — ${label}`);
       info(`    ${method} ${url}`);
       info(`    headers: ${JSON.stringify(headers)}`);
       if (bodyNote !== undefined) info(`    body: ${bodyNote}`);
       else if (body === undefined || body === null) info(`    body: (none)`);
       else info(`    body: ${body}`);
-    },
+    }),
 
-    httpEnd: ({ label, status, statusText, headers, body, durationMs }) => {
+    httpEnd: line(({ label, status, statusText, headers, body, durationMs }) => {
       info(`< RESPONSE — ${label ?? ''}`.trimEnd());
       info(`    status: ${status} ${statusText} (${durationMs} ms)`);
       info(`    headers: ${JSON.stringify(headers)}`);
       info(`    body: ${body === '' ? '(empty)' : body}`);
-    },
+    }),
 
-    httpError: ({ message, durationMs }) => {
+    httpError: line(({ message, durationMs }) => {
       fail(`network error after ${durationMs} ms — ${message}`);
-    },
+    }),
 
-    progress: ({ label, sent, total }) => {
-      const b = bar(label);
-      b.update(sent, total);
-      if (sent >= total) b.done();
-    },
+    progress: ({ label, sent, total }) => progressBar.update(label, sent, total),
 
-    result: ({ results, failures, completed, report, meshes }) => {
+    result: line(({ results, failures, completed, report, meshes }) => {
       console.log('\n──────── summary ────────');
       // A full-mouth scan uploads both arches, so the count is however many went up.
       info(`uploaded: ${results.length}`);
@@ -74,6 +73,6 @@ export function createConsoleReporter() {
         ok(`meshes uploaded: ${meshes.length} (${meshes.map((m) => m.label).join(', ')})`);
       }
       for (const f of failures) fail(`${f.fileName ?? f.step}: ${f.error}`);
-    },
+    }),
   });
 }

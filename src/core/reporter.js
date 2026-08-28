@@ -49,3 +49,39 @@ export function createReporter(handlers = {}) {
 }
 
 export const REPORTER_METHODS = METHODS;
+
+/**
+ * Wrap a reporter so a concurrent task's narration is held and replayed as one block.
+ *
+ * Uploads run in parallel, but their step/ok/HTTP events are the record this app exists to
+ * show — two files racing would shuffle every request and response together. So each task
+ * narrates into its own buffer and the caller flushes them in file order.
+ *
+ * `live` names the events that are NOT buffered because they only mean something as they
+ * happen: `progress` drives a bar, and `phase` drives a pipeline view where several stages
+ * genuinely are active at once.
+ *
+ * @param {ReturnType<createReporter>} target  the real reporter to replay into
+ * @param {{ live?: string[] }} [options]
+ * @returns {{ reporter: ReturnType<createReporter>, flush: () => void }}
+ */
+export function createBufferingReporter(target, { live = ['progress', 'phase'] } = {}) {
+  const queued = [];
+  const reporter = {};
+
+  for (const name of METHODS) {
+    reporter[name] = live.includes(name)
+      ? (...args) => target[name](...args)
+      : (...args) => {
+          queued.push([name, args]);
+        };
+  }
+
+  return {
+    reporter,
+    // Safe to call more than once: a second flush has nothing left to replay.
+    flush() {
+      for (const [name, args] of queued.splice(0)) target[name](...args);
+    },
+  };
+}
