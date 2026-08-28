@@ -458,6 +458,9 @@ ipcMain.handle('flow:run', async (event, params) => {
       upper: (ENV.SCANPRO_SCAN_FILE_TYPE_UPPER || '').trim() || undefined,
       lower: (ENV.SCANPRO_SCAN_FILE_TYPE_LOWER || '').trim() || undefined,
     },
+    // Same reasoning: how many uploads run at once is a property of the install, not of a run,
+    // so it comes from the .env and has no UI field. Unset falls back to the flow's default.
+    uploadConcurrency: (ENV.SCANPRO_UPLOAD_CONCURRENCY || '').trim() || undefined,
   };
 
   const send = (type, payload) => {

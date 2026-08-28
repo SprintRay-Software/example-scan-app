@@ -120,12 +120,22 @@ export async function getUploadLink(
  * reported. NO Authorization and NO x-api-key on the S3 PUT — the presigned URL is
  * self-authorizing, and an extra header breaks its signature. Expects 200/204.
  */
-export async function putFile(reporter, presignedUrl, bytes, fileName, { phase = 'put', label = 'S3 PUT' } = {}) {
+export async function putFile(
+  reporter,
+  presignedUrl,
+  bytes,
+  fileName,
+  { phase = 'put', label = `S3 PUT (${fileName})` } = {}
+) {
   const total = bytes.length;
   // `phase` may be null: a caller that drives its own pipeline stage (the mesh uploads, which are
   // one stage covering many PUTs) reports it once around the whole set instead of per file.
   if (phase) reporter.phase(phase, 'active', `PUT ${total} bytes to S3`);
   reporter.step(`Uploading ${total} bytes to presigned S3 URL`);
+  // Announce the file at 0% before the first byte moves. PUTs run concurrently, so this is what
+  // lets a progress display know the whole batch instead of discovering each file as it starts
+  // to land.
+  reporter.progress({ label: fileName, sent: 0, total, pct: 0 });
 
   const { res, text } = await httpPutStream(reporter, {
     label,

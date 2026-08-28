@@ -77,6 +77,10 @@ Options:
     --tooth-file <p>       mesh PUT for each segmented tooth (default fixtures/tooth.ply)
     --gingiva-file <p>     mesh PUT for each gingiva link (default fixtures/gingiva.ply)
 
+  Uploads run concurrently — the scans of a full-mouth session together, and the meshes the
+  finish call unlocks in batches. Each file still narrates as one block, in file order:
+    --concurrency <n>      files uploaded at once (default $SCANPRO_UPLOAD_CONCURRENCY or 4)
+
 Environment (loaded via --env-file=.env):
     SCANPRO_BASE_URL       SprintRay API-gateway origin, e.g. https://apx.sprintray.com
     SCANPRO_API_KEY        gateway API key, sent as x-api-key on every SprintRay call
@@ -85,6 +89,8 @@ Environment (loaded via --env-file=.env):
     SCANPRO_SCAN_MODE, SCANPRO_SCAN_FILE_TYPE_UPPER, SCANPRO_SCAN_FILE_TYPE_LOWER
                            (optional) your own scan vocabulary — the names SprintRay registers
                            for your integration and an admin maps once
+    SCANPRO_UPLOAD_CONCURRENCY
+                           (optional) files uploaded at once, default 4
 `;
 
 // Very small flag parser — no dependencies.
@@ -105,6 +111,7 @@ function parseArgs(argv) {
     lowerScanType: null,
     toothFile: null,
     gingivaFile: null,
+    concurrency: null,
     help: false,
   };
 
@@ -161,6 +168,9 @@ function parseArgs(argv) {
         break;
       case '--gingiva-file':
         args.gingivaFile = argv[++i];
+        break;
+      case '--concurrency':
+        args.concurrency = argv[++i];
         break;
       default:
         // First non-flag positional is treated as the launch URL (Form A).
@@ -229,8 +239,10 @@ async function main() {
     upperScanFileType: args.upperScanType,
     lowerScanFileType: args.lowerScanType,
   };
+  // Per-run overrides that belong to neither set: how many files go up at once.
+  const run = { concurrency: args.concurrency };
   const input = hasFormA
-    ? { launchUrl: args.launchUrl, demoRefresh: args.demoRefresh, ...files, ...report }
+    ? { launchUrl: args.launchUrl, demoRefresh: args.demoRefresh, ...files, ...report, ...run }
     : {
         code: args.code,
         baseUrlOverride: args.baseUrlOverride,
@@ -238,6 +250,7 @@ async function main() {
         demoRefresh: args.demoRefresh,
         ...files,
         ...report,
+        ...run,
       };
 
   const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR });

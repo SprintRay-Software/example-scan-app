@@ -37,7 +37,7 @@ https://github.com/user-attachments/assets/80a45043-70d4-439b-bcf5-5d6698d452ce
    (见[启动 payload](#启动-payload))。
 3. **换取 token。** 通过 HTTPS 把 `code` + 你的客户端凭据 POST 上去,换取已登录医生的 `access_token`。
 4. **上传。** 扫描仪一次就把上下颌都扫完,所以整口扫描(启动 payload 的 `fileType` 为 `null`)会为**两个**文件
-   各申请一次预签名上传 URL 并分别 PUT;`fileType` 指定某一颌时只传那一个。每次上传都要声明这个文件是什么
+   各申请一次预签名上传 URL 并 PUT —— 文件之间没有先后依赖,可以并发发出;`fileType` 指定某一颌时只传那一个。每次上传都要声明这个文件是什么
    扫描类型(`externalScanFileType`)。扫描文件会自动挂到 treatment 上。
 5. **收尾。** 调用一次扫描结束接口,并随调用上报本次会话扫到了什么 —— 扫描模式、缺失牙位、分割牙齿、
    扫了哪几颌。SprintRay 会返回一批预签名链接,你把分割牙齿与牙龈网格 PUT 上去即可。所有元数据字段
@@ -61,7 +61,7 @@ sequenceDiagram
     App->>App: base64 解码 payload，读取 code + tokenEndpoint
     App->>BE: 用 code + 客户端凭据换取 token
     BE-->>App: access_token + expires_in
-    loop 每个扫描文件（整口扫描 = 上颌 + 下颌）
+    loop 每个扫描文件，并发进行（整口扫描 = 上颌 + 下颌）
         App->>BE: 申请预签名上传 URL（请求体带 scanJobId + externalScanFileType）
         BE-->>App: 预签名上传 URL
         App->>S3: PUT 原始文件字节
@@ -70,7 +70,7 @@ sequenceDiagram
     App->>BE: 本次扫描会话结束（id + 扫描元数据）
     BE-->>App: 200 + 预签名链接（分割牙齿、牙龈）
     opt 上报了分割牙齿 / 颌位
-        App->>S3: PUT tooth_N.ply + 牙龈网格
+        App->>S3: PUT tooth_N.ply + 牙龈网格（并发）
         S3-->>App: 200 / 204
     end
     BE-->>Web: 扫描会话状态事件
@@ -203,6 +203,9 @@ Content-Length: <fileSize>
   可以不传。扫描结束调用上报的元数据正是按它来分配的,所以不传 `arch` 的文件不会被挂上缺失牙位与
   分割牙齿信息。
 - 扫描文件为 **STL** 格式。
+- **文件之间互不依赖。** 申请链接和 PUT 都只针对单个文件，契约里也没有规定它们的先后顺序，因此
+  上行带宽允许的话可以同时发多个：整口会话的两颌一起发，下面的网格链接分批发。契约唯一强制的顺序
+  是扫描结束调用必须在最后一个扫描文件上传之后。
 
 ### 3. 告知 SprintRay 本次扫描会话已结束
 
@@ -582,7 +585,8 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 ```
 
 追加 `--demo-refresh` 可一并演示 token 刷新接口;`--upper-file <p>` / `--lower-file <p>` 可替换某一颌
-要上传的文件。
+要上传的文件;`--concurrency <n>` 控制同时上传几个文件(默认取 `$SCANPRO_UPLOAD_CONCURRENCY`,
+否则 4;传 `--concurrency 1` 即逐个上传)。
 
 结束调用上报的扫描信息,默认由本次运行实际上传的颌位推导得出,每一部分都可以覆盖:
 
@@ -600,12 +604,15 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 
 ### 它做了什么
 
-每次运行会:换取 token,然后按扫描仪的真实行为上传 —— 整口扫描(`fileType` 为 `null`)依次上传
+每次运行会:换取 token,然后按扫描仪的真实行为上传 —— 整口扫描(`fileType` 为 `null`)会同时上传
 `fixtures/upper.stl` 与 `fixtures/lower.stl` 两个文件,`fileType` 指定某一颌时只上传那一个 —— 
-每个文件都带实时进度条,并且都会带上这个文件的扫描类型(`externalScanFileType`)和所属颌位(`arch`)。
+进度条按整批统计,每个文件都会带上自己的扫描类型(`externalScanFileType`)和所属颌位(`arch`)。
+
+上传是并发的,但日志不会交错:每个文件先写进自己的缓冲区,再按文件顺序整段打印出来,所以字节在
+网络上重叠的同时,请求 / 响应日志读起来仍然是一个文件接一个文件。
 
 最后一个文件上传完成后会发起扫描结束调用,并上报本次会话扫到了什么:扫描模式、哪几颌、分割出的牙齿、
-缺失的牙齿。SprintRay 会按每颗分割牙一条、每个已扫颌位的牙龈一条返回预签名链接,本应用逐个 PUT 上去 ——
+缺失的牙齿。SprintRay 会按每颗分割牙一条、每个已扫颌位的牙龈一条返回预签名链接,本应用分批并发 PUT 上去 ——
 整个流程与真实会话完全一致。这些网格属于会话元数据:PUT 之后没有任何后续调用,也不会出现在医生的
 Cloud Drive 里。形式 B(`--code`,无启动 URL)没有 `case.ID`,也就没有会话可结束,这两步都会标记为
 skipped。

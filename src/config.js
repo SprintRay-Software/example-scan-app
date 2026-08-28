@@ -41,6 +41,10 @@ export function loadConfig(env = process.env) {
       upper: String(env.SCANPRO_SCAN_FILE_TYPE_UPPER ?? '').trim() || DEFAULT_SCAN_FILE_TYPES.upper,
       lower: String(env.SCANPRO_SCAN_FILE_TYPE_LOWER ?? '').trim() || DEFAULT_SCAN_FILE_TYPES.lower,
     },
+    // How many file uploads run at once. A run has at most two scans, so this is really the
+    // ceiling for the mesh batch the finish call unlocks — up to 34 PUTs. Optional: unset
+    // falls back to DEFAULT_UPLOAD_CONCURRENCY, and a non-positive value is ignored.
+    uploadConcurrency: String(env.SCANPRO_UPLOAD_CONCURRENCY ?? '').trim() || undefined,
   };
 }
 

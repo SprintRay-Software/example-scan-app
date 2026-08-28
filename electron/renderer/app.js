@@ -89,11 +89,27 @@ function resetPipeline() {
 }
 
 // ---------------- progress ----------------
-function setProgress(name, pct) {
+// Uploads run concurrently, so the one bar is the batch: it moves on total bytes across every
+// file in flight, and names the file only while there is a single one. Flipping the label
+// between racing files would make the bar look like it kept restarting.
+const progressFiles = new Map(); // label -> { sent, total }
+
+function setProgress({ label, sent, total, pct }) {
+  progressFiles.set(label, { sent: sent ?? 0, total: total ?? 0 });
+
+  let sentAll = 0;
+  let totalAll = 0;
+  for (const f of progressFiles.values()) {
+    sentAll += f.sent;
+    totalAll += f.total;
+  }
+  const batchPct = totalAll > 0 ? Math.min(100, Math.floor((sentAll / totalAll) * 100)) : (pct ?? 0);
+
   $('progress-wrap').hidden = false;
-  $('progress-name').textContent = name;
-  $('progress-pct').textContent = pct + '%';
-  $('progress-bar').style.width = pct + '%';
+  $('progress-name').textContent =
+    progressFiles.size === 1 ? label : `${progressFiles.size} files`;
+  $('progress-pct').textContent = batchPct + '%';
+  $('progress-bar').style.width = batchPct + '%';
 }
 
 // ---------------- payload panel ----------------
@@ -235,7 +251,7 @@ window.scanpro.onFlowEvent(({ type, payload }) => {
     case 'httpStart': txStart(payload); break;
     case 'httpEnd': txEnd(payload); break;
     case 'httpError': txError(payload); break;
-    case 'progress': setProgress(payload.label, payload.pct); break;
+    case 'progress': setProgress(payload); break;
     case 'result': {
       const { ok, results, failures, meshes } = payload;
       // A full-mouth scan uploads both arches, and the finish call may add a mesh per segmented
@@ -301,6 +317,7 @@ function resetRunState() {
   $('banner').hidden = true;
   resetPipeline();
   txReset();
+  progressFiles.clear();
   $('progress-wrap').hidden = true;
   $('progress-bar').style.width = '0';
 }
