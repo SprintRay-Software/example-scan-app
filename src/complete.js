@@ -44,8 +44,10 @@ function describeLinks(job) {
  *   Authorization: Bearer <accessToken>   x-api-key: <apiKey>
  *   { id, caseId?, scanMode?, hasUpper?, hasLower?, missingTeeth?, segmentedTeeth? }
  *
- * `id` is the launch payload's `case.ID`. (`scanJobId` is the original name for the same field
- * and is still accepted, so a shipped app needs no change; `id` wins when both are sent.)
+ * `id` is the launch payload's `case.ID` — and it is what this call names the session, which is
+ * why the parameter carries the contract's name rather than the `scanJobId` the UPLOAD body uses
+ * for the same value. (`scanJobId` is the original name for this field and is still accepted here
+ * too, so a shipped app needs no change; `id` wins when both are sent. New code should send `id`.)
  * `caseId` is only a fallback for a client that did not keep the id — it is not unique per
  * launch, so SprintRay resolves the newest session carrying it.
  *
@@ -59,7 +61,7 @@ function describeLinks(job) {
  */
 export async function completeScanJob(
   reporter,
-  { baseUrl, apiKey, accessToken, scanJobId, externalCaseId, report = null }
+  { baseUrl, apiKey, accessToken, id, externalCaseId, report = null }
 ) {
   const url = joinUrl(baseUrl, 'integration/scan-job/complete');
   const headers = {
@@ -68,13 +70,13 @@ export async function completeScanJob(
     Authorization: `Bearer ${accessToken}`,
     'x-api-key': apiKey,
   };
-  const body = { id: scanJobId, caseId: externalCaseId, ...(report ?? {}) };
+  const body = { id, caseId: externalCaseId, ...(report ?? {}) };
 
-  reporter.phase('complete', 'active', `id=${scanJobId}`);
+  reporter.phase('complete', 'active', `id=${id}`);
   reporter.step(
     report
-      ? `Finishing the scan session and reporting what it captured (id=${scanJobId})`
-      : `Finishing the scan session with no metadata (id=${scanJobId})`
+      ? `Finishing the scan session and reporting what it captured (id=${id})`
+      : `Finishing the scan session with no metadata (id=${id})`
   );
 
   const { res, text } = await httpJson(reporter, {

@@ -68,7 +68,7 @@ export function createConsoleReporter() {
         info(`reported: ${describeScanReport(report)}`);
       }
       if (completed) {
-        ok(`scan session finished — scanJobId ${completed.id}, status ${completed.status}`);
+        ok(`scan session finished — id ${completed.id}, status ${completed.status}`);
       }
       if (meshes?.length) {
         ok(`meshes uploaded: ${meshes.length} (${meshes.map((m) => m.label).join(', ')})`);

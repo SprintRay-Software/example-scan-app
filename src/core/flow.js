@@ -259,7 +259,8 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
         baseUrl,
         apiKey: config.apiKey,
         accessToken: tokens.access_token,
-        scanJobId,
+        // The finish call names the session `id`; the upload body calls the same value `scanJobId`.
+        id: scanJobId,
         externalCaseId,
         report,
       });
