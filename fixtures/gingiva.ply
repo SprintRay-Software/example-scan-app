@@ -1,0 +1,25 @@
+ply
+format ascii 1.0
+comment simulated gingiva mesh - SprintRay scanner integration example
+comment a real scanner PUTs the arch's own gum mesh here; this app reuses one small strip
+element vertex 8
+property float x
+property float y
+property float z
+element face 6
+property list uchar int vertex_index
+end_header
+-3.0 0.0 0.0
+-2.0 1.0 0.0
+-1.0 1.6 0.0
+0.0 1.8 0.0
+1.0 1.6 0.0
+2.0 1.0 0.0
+3.0 0.0 0.0
+0.0 0.0 -1.0
+3 0 1 7
+3 1 2 7
+3 2 3 7
+3 3 4 7
+3 4 5 7
+3 5 6 7

@@ -4,7 +4,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { httpJson, httpPutStream, joinUrl } from './core/net.js';
-import { fileTypeName } from './payload.js';
+import { archName, fileTypeName } from './payload.js';
 
 /**
  * The /file/upload response may be:
@@ -27,7 +27,20 @@ function extractPresignedUrl(parsed) {
  */
 export async function getUploadLink(
   reporter,
-  { baseUrl, apiKey, accessToken, fileName, fileSize, treatmentId, scanJobId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
+  {
+    baseUrl,
+    apiKey,
+    accessToken,
+    fileName,
+    fileSize,
+    treatmentId,
+    scanJobId,
+    treatmentFileType,
+    fileTypeSource = 'fixture default',
+    externalScanFileType,
+    arch,
+    externalCaseId,
+  }
 ) {
   const url = joinUrl(baseUrl, 'integration/file/upload');
   const headers = {
@@ -39,12 +52,32 @@ export async function getUploadLink(
   // scanJobId names the scan session this file belongs to; treatmentId binds it to the treatment.
   // They coexist, and a launch with no treatment behind it sends scanJobId alone — that is the only
   // way its uploads get recorded.
-  const model = { fileName, fileSize, treatmentId, scanJobId, treatmentFileType, externalCaseId };
+  //
+  // externalScanFileType is this app's OWN name for what the file is. SprintRay registers an
+  // unseen name against the integration on first sight, and once an admin has mapped it, that
+  // mapping — not the treatmentFileType below — decides the file's SprintRay type. `arch` says
+  // which jaw the file captures; it is what the scan-finish metadata is split by, so a file with
+  // no arch gets none of it.
+  const model = {
+    fileName,
+    fileSize,
+    treatmentId,
+    scanJobId,
+    treatmentFileType,
+    externalScanFileType,
+    arch,
+    externalCaseId,
+  };
 
   // Highlight which FileType is being sent in the upload body and where it came from.
   reporter.phase('link', 'active', `FileType ${treatmentFileType} (${fileTypeName(treatmentFileType)})`);
   reporter.step(
     `Upload FileType for ${fileName}: ${treatmentFileType} (${fileTypeName(treatmentFileType)}) — source: ${fileTypeSource}`
+  );
+  reporter.step(
+    `Scan type for ${fileName}: externalScanFileType=${externalScanFileType ?? '(none)'}` +
+      `, arch=${arch === null || arch === undefined ? '(none)' : `${arch} (${archName(arch)})`}` +
+      ' — a mapped externalScanFileType outranks the treatmentFileType above'
   );
   reporter.step(`Requesting presigned upload URL for ${fileName} (treatmentFileType=${treatmentFileType})`);
 
@@ -87,13 +120,15 @@ export async function getUploadLink(
  * reported. NO Authorization and NO x-api-key on the S3 PUT — the presigned URL is
  * self-authorizing, and an extra header breaks its signature. Expects 200/204.
  */
-export async function putFile(reporter, presignedUrl, bytes, fileName) {
+export async function putFile(reporter, presignedUrl, bytes, fileName, { phase = 'put', label = 'S3 PUT' } = {}) {
   const total = bytes.length;
-  reporter.phase('put', 'active', `PUT ${total} bytes to S3`);
+  // `phase` may be null: a caller that drives its own pipeline stage (the mesh uploads, which are
+  // one stage covering many PUTs) reports it once around the whole set instead of per file.
+  if (phase) reporter.phase(phase, 'active', `PUT ${total} bytes to S3`);
   reporter.step(`Uploading ${total} bytes to presigned S3 URL`);
 
   const { res, text } = await httpPutStream(reporter, {
-    label: 'S3 PUT',
+    label,
     url: presignedUrl,
     bytes,
     onProgress: (sent, t) => {
@@ -103,12 +138,12 @@ export async function putFile(reporter, presignedUrl, bytes, fileName) {
   });
 
   if (res.status !== 200 && res.status !== 204) {
-    reporter.phase('put', 'error', `HTTP ${res.status}`);
+    if (phase) reporter.phase(phase, 'error', `HTTP ${res.status}`);
     throw new Error(`putFile: S3 PUT returned HTTP ${res.status}${text ? ` — ${text.slice(0, 500)}` : ''}`);
   }
 
   reporter.ok(`S3 PUT succeeded (HTTP ${res.status})`);
-  reporter.phase('put', 'done', `HTTP ${res.status}`);
+  if (phase) reporter.phase(phase, 'done', `HTTP ${res.status}`);
 }
 
 /**
@@ -117,7 +152,20 @@ export async function putFile(reporter, presignedUrl, bytes, fileName) {
  */
 export async function uploadFixture(
   reporter,
-  { baseUrl, apiKey, accessToken, filePath, fileName, treatmentId, scanJobId, treatmentFileType, fileTypeSource = 'fixture default', externalCaseId }
+  {
+    baseUrl,
+    apiKey,
+    accessToken,
+    filePath,
+    fileName,
+    treatmentId,
+    scanJobId,
+    treatmentFileType,
+    fileTypeSource = 'fixture default',
+    externalScanFileType,
+    arch,
+    externalCaseId,
+  }
 ) {
   const bytes = await readFile(filePath);
   reporter.info(`Read scan ${fileName} (${bytes.length} bytes)`);
@@ -132,10 +180,19 @@ export async function uploadFixture(
     scanJobId,
     treatmentFileType,
     fileTypeSource,
+    externalScanFileType,
+    arch,
     externalCaseId,
   });
 
   await putFile(reporter, presignedUrl, bytes, fileName);
 
-  return { fileName, treatmentFileType, fileTypeSource, fileSize: bytes.length };
+  return {
+    fileName,
+    treatmentFileType,
+    fileTypeSource,
+    externalScanFileType,
+    arch,
+    fileSize: bytes.length,
+  };
 }

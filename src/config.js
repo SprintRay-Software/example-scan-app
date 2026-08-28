@@ -2,6 +2,7 @@
 // Env is expected to be loaded via `node --env-file=.env` (Node 20.6+); no dotenv dependency.
 
 import { fail } from './log.js';
+import { DEFAULT_SCAN_MODE, DEFAULT_SCAN_FILE_TYPES } from './scan-report.js';
 
 const REQUIRED = ['SCANPRO_BASE_URL', 'SCANPRO_API_KEY', 'SCANPRO_CLIENT_ID', 'SCANPRO_CLIENT_SECRET'];
 
@@ -31,6 +32,15 @@ export function loadConfig(env = process.env) {
     apiKey: String(env.SCANPRO_API_KEY).trim(),
     clientId: String(env.SCANPRO_CLIENT_ID).trim(),
     clientSecret: String(env.SCANPRO_CLIENT_SECRET).trim(),
+    // The integration's own scan vocabulary — not SprintRay enums. These names are what
+    // SprintRay registers for the integration on first sight and an admin maps once, so they
+    // belong to the deployment rather than to a run. Optional: the defaults are what this
+    // example calls its own scan types and mode.
+    scanMode: String(env.SCANPRO_SCAN_MODE ?? '').trim() || DEFAULT_SCAN_MODE,
+    scanFileTypes: {
+      upper: String(env.SCANPRO_SCAN_FILE_TYPE_UPPER ?? '').trim() || DEFAULT_SCAN_FILE_TYPES.upper,
+      lower: String(env.SCANPRO_SCAN_FILE_TYPE_LOWER ?? '').trim() || DEFAULT_SCAN_FILE_TYPES.lower,
+    },
   };
 }
 

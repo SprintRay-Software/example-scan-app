@@ -13,7 +13,8 @@
 // OS handler for the scanner's URL scheme, so the browser can launch it for real. Form D
 // runs the local HTTP service the web app probes on 127.0.0.1 (the other launch transport).
 //
-// Optional (A/B): --demo-refresh  (also exercises the token refresh endpoint)
+// Optional (A/B): --demo-refresh  (also exercises the token refresh endpoint), plus the
+//   scan-report flags below (--scan-mode / --missing-teeth / --segmented-teeth / --no-metadata).
 //
 // Env (via `node --env-file=.env`): SCANPRO_BASE_URL, SCANPRO_API_KEY, SCANPRO_CLIENT_ID,
 //   SCANPRO_CLIENT_SECRET, and optional SCANPRO_URL_SCHEME (default scheme for `register`).
@@ -22,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { loadConfig } from './config.js';
+import { parseTeethList } from './scan-report.js';
 import { fail } from './log.js';
 import { runFlow } from './core/flow.js';
 import { createConsoleReporter } from './core/console-reporter.js';
@@ -63,11 +65,26 @@ Options:
     --headless             (macOS register) run headless to a log file instead of a Terminal window
     -h, --help             show this help
 
+  Scan report — what the finish call tells SprintRay the session captured. Every field is
+  optional on the wire; these flags override what this app derives from the arches it uploaded:
+    --scan-mode <name>     your own mode name (default $SCANPRO_SCAN_MODE or quickScan)
+    --missing-teeth <list> universal tooth numbers not there, e.g. 1,16 (default none)
+    --segmented-teeth <l>  universal tooth numbers you segmented, or "none"
+                           (default: every tooth of the captured arches that is not missing)
+    --no-metadata          report nothing: finish the session the pre-metadata way
+    --upper-scan-type <n>  externalScanFileType for the upper file (default UpperArch)
+    --lower-scan-type <n>  externalScanFileType for the lower file (default LowerArch)
+    --tooth-file <p>       mesh PUT for each segmented tooth (default fixtures/tooth.ply)
+    --gingiva-file <p>     mesh PUT for each gingiva link (default fixtures/gingiva.ply)
+
 Environment (loaded via --env-file=.env):
     SCANPRO_BASE_URL       SprintRay API-gateway origin, e.g. https://apx.sprintray.com
     SCANPRO_API_KEY        gateway API key, sent as x-api-key on every SprintRay call
     SCANPRO_CLIENT_ID, SCANPRO_CLIENT_SECRET
     SCANPRO_URL_SCHEME     (optional)
+    SCANPRO_SCAN_MODE, SCANPRO_SCAN_FILE_TYPE_UPPER, SCANPRO_SCAN_FILE_TYPE_LOWER
+                           (optional) your own scan vocabulary — the names SprintRay registers
+                           for your integration and an admin maps once
 `;
 
 // Very small flag parser — no dependencies.
@@ -80,6 +97,14 @@ function parseArgs(argv) {
     upperFile: null,
     lowerFile: null,
     demoRefresh: false,
+    scanMode: null,
+    missingTeeth: null,
+    segmentedTeeth: null,
+    noMetadata: false,
+    upperScanType: null,
+    lowerScanType: null,
+    toothFile: null,
+    gingivaFile: null,
     help: false,
   };
 
@@ -107,6 +132,35 @@ function parseArgs(argv) {
         break;
       case '--demo-refresh':
         args.demoRefresh = true;
+        break;
+      case '--scan-mode':
+        args.scanMode = argv[++i];
+        break;
+      case '--missing-teeth':
+        args.missingTeeth = parseTeethList(argv[++i], '--missing-teeth');
+        break;
+      case '--segmented-teeth': {
+        const raw = argv[++i];
+        // `none` is not the same as omitting the flag: it reports zero segmented teeth, so no
+        // tooth links come back — the way a mode that segments nothing behaves.
+        args.segmentedTeeth =
+          String(raw ?? '').trim().toLowerCase() === 'none' ? [] : parseTeethList(raw, '--segmented-teeth');
+        break;
+      }
+      case '--no-metadata':
+        args.noMetadata = true;
+        break;
+      case '--upper-scan-type':
+        args.upperScanType = argv[++i];
+        break;
+      case '--lower-scan-type':
+        args.lowerScanType = argv[++i];
+        break;
+      case '--tooth-file':
+        args.toothFile = argv[++i];
+        break;
+      case '--gingiva-file':
+        args.gingivaFile = argv[++i];
         break;
       default:
         // First non-flag positional is treated as the launch URL (Form A).
@@ -159,16 +213,31 @@ async function main() {
   const config = loadConfig(process.env);
   const reporter = createConsoleReporter();
 
-  // Both forms accept the same per-arch file overrides.
-  const files = { upperFileOverride: args.upperFile, lowerFileOverride: args.lowerFile };
+  // Both forms accept the same per-arch file overrides and the same scan-report overrides.
+  // (Form B has no scan session, so its report is never sent — see runFlow.)
+  const files = {
+    upperFileOverride: args.upperFile,
+    lowerFileOverride: args.lowerFile,
+    toothFileOverride: args.toothFile,
+    gingivaFileOverride: args.gingivaFile,
+  };
+  const report = {
+    scanMode: args.scanMode,
+    missingTeeth: args.missingTeeth,
+    segmentedTeeth: args.segmentedTeeth,
+    noMetadata: args.noMetadata,
+    upperScanFileType: args.upperScanType,
+    lowerScanFileType: args.lowerScanType,
+  };
   const input = hasFormA
-    ? { launchUrl: args.launchUrl, demoRefresh: args.demoRefresh, ...files }
+    ? { launchUrl: args.launchUrl, demoRefresh: args.demoRefresh, ...files, ...report }
     : {
         code: args.code,
         baseUrlOverride: args.baseUrlOverride,
         treatmentId: args.treatmentId,
         demoRefresh: args.demoRefresh,
         ...files,
+        ...report,
       };
 
   const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR });

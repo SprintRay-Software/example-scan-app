@@ -237,9 +237,19 @@ window.scanpro.onFlowEvent(({ type, payload }) => {
     case 'httpError': txError(payload); break;
     case 'progress': setProgress(payload.label, payload.pct); break;
     case 'result': {
-      const { ok, results, failures } = payload;
-      if (ok) showBanner(true, `Success — uploaded ${results.length}/1 scan.`);
-      else showBanner(false, `Failed — ${failures.map((f) => f.fileName + ': ' + f.error).join('; ')}`);
+      const { ok, results, failures, meshes } = payload;
+      // A full-mouth scan uploads both arches, and the finish call may add a mesh per segmented
+      // tooth and per arch's gingiva — so both counts come from the run, not from a fixed total.
+      const meshCount = meshes?.length ?? 0;
+      if (ok) {
+        showBanner(
+          true,
+          `Success — uploaded ${results.length} scan(s)` + (meshCount > 0 ? ` + ${meshCount} mesh(es).` : '.')
+        );
+      } else {
+        // A failure may be a file (a scan or a mesh) or a step with no file behind it.
+        showBanner(false, `Failed — ${failures.map((f) => (f.fileName ?? f.step) + ': ' + f.error).join('; ')}`);
+      }
       break;
     }
     default: break;
