@@ -80,7 +80,7 @@ function buildUpload(treatmentFileType, fileTypeSource, input, fixturesDir, voca
  * @param {{ baseUrl: string, apiKey: string, clientId: string, clientSecret: string }} opts.config
  * @param {object} opts.input
  *   Form A: { launchUrl }
- *   Form B: { code, baseUrlOverride?, treatmentId? }
+ *   Form B: { code, baseUrlOverride?, scanJobId?, treatmentId? }
  *   both:   { demoRefresh?, upperFileOverride?, lowerFileOverride?,
  *             scanMode?, upperScanFileType?, lowerScanFileType?,
  *             missingTeeth?, segmentedTeeth?, noMetadata?,
@@ -135,13 +135,23 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     if (input.baseUrlOverride) baseUrl = normalizeBaseUrl(input.baseUrlOverride);
     tokenPath = DEFAULT_TOKEN_PATH;
     treatmentId = input.treatmentId ?? null;
-    // No launch payload means no real scan session: this dev path reuses the treatment id as the
-    // case reference and has no case.ID at all, which is why it skips the scan-finish call below.
-    scanJobId = null;
-    externalCaseId = input.treatmentId ?? null;
+    // There is no launch payload to read case.ID from, so the session has to be named explicitly:
+    // --scan-job-id takes the `scanJobId` the device-login-code response returned. Naming it is
+    // what lets the uploads be recorded against the session — and what lets the backend resolve
+    // which integration they belong to, since a device-login token authenticates as the shared
+    // exchange client and its `azp` names no integration. Without it the uploads are rejected.
+    scanJobId = input.scanJobId ?? null;
+    externalCaseId = scanJobId ?? input.treatmentId ?? null;
     reporter.info(`code=${code}`);
     reporter.info(`baseUrl=${baseUrl}`);
     reporter.info(`treatmentId=${treatmentId ?? '(none)'}`);
+    reporter.info(`scanJobId=${scanJobId ?? '(none)'}`);
+    if (!scanJobId && !treatmentId) {
+      reporter.info(
+        'Form B with neither --scan-job-id nor --treatment-id: the uploads name no scan session, ' +
+          'so the backend cannot tell which integration they belong to and will reject them with 400.'
+      );
+    }
   }
 
   reporter.info(
@@ -221,9 +231,9 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     }
   }
 
-  // 3) Tell SprintRay the session is over, and report what it captured. Only a real Form A
-  // launch has a scan session to finish; Form B has no case.ID, so it reports the step as
-  // skipped rather than guessing an id.
+  // 3) Tell SprintRay the session is over, and report what it captured. Needs the session id —
+  // Form A reads it from the launch payload's case.ID, Form B takes it from --scan-job-id. With
+  // neither, the step reports as skipped rather than guessing an id.
   //
   // The report describes the CAPTURE, not the transfer: it is built from the arches this session
   // scanned, so an arch whose upload failed above is still reported as captured. `--no-metadata`
@@ -278,9 +288,12 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
       reporter.phase('meshes', 'skipped', 'the session was not finished');
     }
   } else {
-    reporter.phase('complete', 'skipped', 'no scan session (Form B)');
-    reporter.info('Skipping scan-job/complete: this run has no launch payload, so no case.ID.');
-    reporter.phase('meshes', 'skipped', 'no scan session (Form B)');
+    reporter.phase('complete', 'skipped', 'no scan session named');
+    reporter.info(
+      'Skipping scan-job/complete: this run named no scan session. Form A reads it from the ' +
+        "launch payload's case.ID; for Form B pass --scan-job-id."
+    );
+    reporter.phase('meshes', 'skipped', 'no scan session named');
   }
 
   const summary = { ok: failures.length === 0, results, failures, completed, report, meshes };

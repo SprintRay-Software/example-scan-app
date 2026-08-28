@@ -5,7 +5,7 @@
 //
 // Invocation forms:
 //   A) node src/index.js "openScanPro://<base64_json>"          (handle a launch URL)
-//   B) node src/index.js --code <c> --base-url <u> [--treatment-id <guid>]
+//   B) node src/index.js --code <c> --base-url <u> --scan-job-id <guid> [--treatment-id <guid>]
 //   C) node src/index.js register|unregister|status [--scheme <s>] [--env-file <p>] [--headless]
 //   D) node src/index.js serve [--port-start <n>] [--run-flow] ...
 //
@@ -40,7 +40,7 @@ Usage:
     node --env-file=.env src/index.js "openScanPro://<base64_json>"
 
   Form B (explicit flags):
-    node --env-file=.env src/index.js --code <code> [--base-url <url>] [--treatment-id <guid>]
+    node --env-file=.env src/index.js --code <code> --scan-job-id <guid> [--base-url <url>] [--treatment-id <guid>]
 
   Form C (register this simulator as the OS handler for the scanner URL scheme,
           so clicking "OR Scan" in the browser launches it for real):
@@ -54,6 +54,9 @@ ${SERVE_USAGE.split('\n').slice(1).join('\n')}
 
 Options:
     --code <code>          device-login code to exchange (Form B)
+    --scan-job-id <guid>   scan session the uploads belong to — the scanJobId the
+                           device-login-code response returned (Form B; Form A reads it
+                           from the launch payload's case.ID)
     --base-url <url>       override SCANPRO_BASE_URL for this run (Form B)
     --treatment-id <guid>  treatmentId to attach uploads to (Form B)
     --upper-file <p>       scan to send as FileType 1 (default fixtures/upper.stl)
@@ -93,6 +96,7 @@ function parseArgs(argv) {
     launchUrl: null,
     code: null,
     baseUrlOverride: null,
+    scanJobId: null,
     treatmentId: null,
     upperFile: null,
     lowerFile: null,
@@ -120,6 +124,9 @@ function parseArgs(argv) {
         break;
       case '--base-url':
         args.baseUrlOverride = argv[++i];
+        break;
+      case '--scan-job-id':
+        args.scanJobId = argv[++i];
         break;
       case '--treatment-id':
         args.treatmentId = argv[++i];
@@ -214,7 +221,7 @@ async function main() {
   const reporter = createConsoleReporter();
 
   // Both forms accept the same per-arch file overrides and the same scan-report overrides.
-  // (Form B has no scan session, so its report is never sent — see runFlow.)
+  // (Form B sends its report only when --scan-job-id names a session — see runFlow.)
   const files = {
     upperFileOverride: args.upperFile,
     lowerFileOverride: args.lowerFile,
@@ -234,6 +241,7 @@ async function main() {
     : {
         code: args.code,
         baseUrlOverride: args.baseUrlOverride,
+        scanJobId: args.scanJobId,
         treatmentId: args.treatmentId,
         demoRefresh: args.demoRefresh,
         ...files,

@@ -185,6 +185,8 @@ Content-Length: <fileSize>
 - `scanJobId`:即启动 payload 中的 `case.ID`,标识该文件所属的扫描会话。**每次上传都要带上** ——
   SprintRay 靠它跟踪会话进度;对于不携带 treatment 的拉起,这也是其上传能被记录下来的唯一途径。
   `treatmentId` 仍各司其职,负责把文件绑定到 treatment,两者并存。
+  两者**都不传**的上传会被 `400` 拒绝:你的 access token 由 device-login 交换签发,而交换所用的客户端
+  是所有集成共用的,因此只有扫描会话能告诉 SprintRay 这个文件属于哪个集成。
 - `externalScanFileType`:**每次上传必传。** 即**你自己对这个文件的命名** —— `UpperArch`、`LowerJaw`、
   `BiteScan`,你的应用本来怎么叫就怎么传,不必迁就 SprintRay 的编号。SprintRay 首次见到某个名字时,
   会把它登记在你这个集成名下;之后由 SprintRay 管理员一次性把它映射到对应的 SprintRay 文件类型和/或
@@ -578,8 +580,12 @@ npm run unregister    # 移除
 node --env-file=.env src/index.js "yourscheme://<base64_json>"
 
 # 形式 B —— 显式传入 code(无启动 URL)
-node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-id <guid>
+node --env-file=.env src/index.js --code <code> --base-url <origin> --scan-job-id <guid>
 ```
+
+形式 B 没有启动 payload 可供读取 `case.ID`,因此要显式传 `--scan-job-id` —— 即 `device-login-code`
+响应返回的 `scanJobId`。不传它,上传就没有指明扫描会话,SprintRay 会以 `400` 拒绝;它同时也是形式 B
+能发起扫描结束调用的前提。`--treatment-id <guid>` 是另一个独立的可选参数,用于把文件绑定到 treatment。
 
 追加 `--demo-refresh` 可一并演示 token 刷新接口;`--upper-file <p>` / `--lower-file <p>` 可替换某一颌
 要上传的文件。

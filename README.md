@@ -196,9 +196,12 @@ Content-Length: <fileSize>
 `200`/`204` on success. **No** auth header on the PUT — the presigned URL is self-authorizing.
 
 - `scanJobId`: the launch payload's `case.ID`. It names the scan session this file belongs to.
-  Send it on every upload — it is what lets SprintRay track the session's progress, and it is the
+  **Send it on every upload.** It is what lets SprintRay track the session's progress, and it is the
   only way a launch that carries no treatment gets its uploads recorded at all. `treatmentId` keeps
   its own job of binding the file to the treatment; the two coexist.
+  An upload that names **neither** is rejected with `400`: your access token was minted by the
+  device-login exchange, which authenticates as a client shared by every integration, so the session
+  is the only thing that tells SprintRay which integration the file belongs to.
 - `externalScanFileType`: **required on every upload.** Your own name for what this file is —
   `UpperArch`, `LowerJaw`, `BiteScan`, whatever your app already calls it; you do not have to adopt
   SprintRay's numbering. A name SprintRay has not seen before is registered against your integration
@@ -625,8 +628,13 @@ npm run unregister    # remove it
 node --env-file=.env src/index.js "yourscheme://<base64_json>"
 
 # Form B — an explicit code (no launch URL)
-node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-id <guid>
+node --env-file=.env src/index.js --code <code> --base-url <origin> --scan-job-id <guid>
 ```
+
+Form B has no launch payload to read `case.ID` from, so pass `--scan-job-id` — the `scanJobId` the
+`device-login-code` response returned. Without it the uploads name no scan session and SprintRay
+rejects them with `400`; it is also what lets Form B make the scan-finish call. `--treatment-id
+<guid>` is separate and optional, and binds the files to a treatment.
 
 Add `--demo-refresh` to also exercise the token-refresh endpoint; `--upper-file <p>` / `--lower-file <p>`
 swap the file sent for either arch.

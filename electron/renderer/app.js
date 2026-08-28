@@ -294,7 +294,12 @@ function currentInput() {
     lowerFileOverride: $('in-file-lower').value.trim() || null,
   };
   if (mode === 'url') return { ...common, launchUrl: $('in-launch-url').value.trim() };
-  return { ...common, code: $('in-code').value.trim(), treatmentId: $('in-treatment').value.trim() || null };
+  return {
+    ...common,
+    code: $('in-code').value.trim(),
+    scanJobId: $('in-scan-job').value.trim() || null,
+    treatmentId: $('in-treatment').value.trim() || null,
+  };
 }
 
 function resetRunState() {
