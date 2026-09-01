@@ -29,10 +29,28 @@ const FIXTURES_DIR = app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked', 'fixtures')
   : resolve(SIM_DIR, 'fixtures');
 
+// Which env file a run reads can be pointed elsewhere — `npm run app -- --env-file=.env.staging`
+// or SCANPRO_ENV_FILE=.env.staging — so switching between environments does not mean editing or
+// swapping .env. The flag is read straight off argv rather than through a parser because it has
+// to be known before anything else runs; the env var exists for launches that cannot pass args
+// (the OS URL scheme, a packaged app started from Finder/Explorer).
+function envFileOverride() {
+  const argv = process.argv.slice(1);
+  const i = argv.findIndex((a) => a === '--env-file' || a.startsWith('--env-file='));
+  const fromArgv =
+    i === -1 ? null : argv[i].startsWith('--env-file=') ? argv[i].slice('--env-file='.length) : argv[i + 1];
+  return (fromArgv ?? process.env.SCANPRO_ENV_FILE ?? '').trim() || null;
+}
+
 // In development the .env sits in the repo. A packaged app cannot have one written into its
 // read-only bundle, so look beside the executable first (the natural place for a tester to
 // drop one), then in the per-user data directory.
 function resolveEnvFile() {
+  // A relative override resolves against the repo in dev and against the executable's directory
+  // in a packaged build — in both cases where the tester's own files actually sit.
+  const override = envFileOverride();
+  if (override) return resolve(app.isPackaged ? dirname(app.getPath('exe')) : SIM_DIR, override);
+
   if (!app.isPackaged) return resolve(SIM_DIR, '.env');
   const candidates = [
     join(dirname(app.getPath('exe')), '.env'),
@@ -43,6 +61,12 @@ function resolveEnvFile() {
 }
 
 const ENV_FILE = resolveEnvFile();
+
+// An explicitly requested env file that is not there is a mistake worth saying out loud: the app
+// would otherwise come up looking normal, with every config field empty and nothing sent anywhere.
+if (envFileOverride() && !existsSync(ENV_FILE)) {
+  console.warn(`[env] ${ENV_FILE} does not exist — the config fields start empty`);
+}
 
 // ---------------------------------------------------------------------------
 // .env — read (never write to process.env) so the UI can prefill config fields.
