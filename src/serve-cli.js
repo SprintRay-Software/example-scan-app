@@ -11,27 +11,18 @@
 
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { readFileSync } from 'node:fs';
 
-import { loadConfig, loadLocalServerConfig } from './config.js';
+import { loadConfig, loadLocalServerConfig, packageVersion } from './config.js';
 import { fail, info, ok, step } from './log.js';
 import { runFlow } from './core/flow.js';
 import { createConsoleReporter } from './core/console-reporter.js';
 import { startScanProLocalServer, summarizeArgument } from './local-server/index.js';
+import { reportScannerConnectedOnLaunch } from './telemetry.js';
 import { schemeStatus } from './scheme/index.js';
 import { openWithOsHandler, waitForApplication } from './scheme/open.js';
 
 const SIM_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES_DIR = resolve(SIM_DIR, 'fixtures');
-
-// The version /status reports by default — this app stands in for ScanPro, so it reports its own.
-function packageVersion() {
-  try {
-    return JSON.parse(readFileSync(resolve(SIM_DIR, 'package.json'), 'utf8')).version;
-  } catch {
-    return undefined;
-  }
-}
 
 export const SERVE_COMMANDS = new Set(['serve']);
 
@@ -197,6 +188,15 @@ export async function runServeCommand(argv, env = process.env) {
       }
 
       state.running = true;
+
+      // Without --run-flow the launch is handed to the OS handler above, and whatever starts up
+      // reports its own scanner.connected. Here the payload is handled in-process, so this is
+      // the launch and this is where the event comes from.
+      reportScannerConnectedOnLaunch({
+        env,
+        defaults: { appVersion: options.reportedVersion, installPath: SIM_DIR },
+        log: info,
+      });
 
       // The contract says /start blocks until ScanPro is up or has failed. Awaiting the whole
       // flow here reproduces that: the HTTP response lands only once the upload is done.

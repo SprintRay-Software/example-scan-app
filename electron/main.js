@@ -8,7 +8,8 @@
 //
 // On startup it additionally brings up the ScanPro local HTTP service on 127.0.0.1
 // (src/local-server) — the second way the web app can reach a desktop scanner. Both
-// transports carry the same base64 launch payload and land in the same UI.
+// transports carry the same base64 launch payload and land in the same UI, and both report
+// the `scanner.connected` telemetry event (src/telemetry.js) as the launch comes in.
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +20,7 @@ import { normalizeBaseUrl, loadLocalServerConfig } from '../src/config.js';
 import { runFlow, decodeLaunch } from '../src/core/flow.js';
 import { createReporter } from '../src/core/reporter.js';
 import { startScanProLocalServer, summarizeArgument } from '../src/local-server/index.js';
+import { reportScannerConnectedOnLaunch } from '../src/telemetry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SIM_DIR = resolve(__dirname, '..');
@@ -218,6 +220,19 @@ const LAUNCH_TIMEOUT_MS = 30_000;
 function deliverLaunch(url, source = 'os') {
   if (!url) return Promise.resolve(false);
 
+  // Every launch — either transport, window already open or not — is a scanner arriving at a
+  // case, so it is reported once, here. Deliberately not awaited: /start blocks on the value
+  // this function returns, and a slow telemetry endpoint must not become a slow launch.
+  reportScannerConnectedOnLaunch({
+    env: { ...process.env, ...ENV },
+    defaults: {
+      appVersion: app.getVersion(),
+      installPath: app.isPackaged ? dirname(app.getPath('exe')) : SIM_DIR,
+      stateDir: app.getPath('userData'),
+    },
+    log: (msg) => console.log(`[telemetry] ${msg} (launch via ${source})`),
+  });
+
   if (mainWindow && rendererReady) {
     mainWindow.webContents.send('launch', { url, source });
     revealWindow(mainWindow);
@@ -289,10 +304,11 @@ if (!gotLock) {
 
     createWindow();
 
-    // First-launch deep link on Windows/Linux arrives in the initial argv.
+    // First-launch deep link on Windows/Linux arrives in the initial argv. It goes through
+    // deliverLaunch like every other launch — queued behind the window that is still loading,
+    // reported to telemetry, and revealed once the renderer is ready.
     if (process.platform !== 'darwin') {
-      const initial = deepLinkFromArgv(process.argv);
-      if (initial) pendingLaunch = { url: initial, source: 'os' };
+      deliverLaunch(deepLinkFromArgv(process.argv));
     }
 
     // The local service comes up alongside the window, never in front of it: a failure to

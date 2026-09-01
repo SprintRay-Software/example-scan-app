@@ -5,7 +5,7 @@
 // The range is scanned from the low end upwards and the FIRST port that accepts a listen
 // wins, so a caller probing 29083, 29084, … in the same order finds the service quickly.
 // When every port in the range is taken the service does NOT start; the caller is expected
-// to report telemetry instead (see ./telemetry.js).
+// to report telemetry instead (see ../telemetry.js).
 //
 // Zero dependencies — node:http only.
 

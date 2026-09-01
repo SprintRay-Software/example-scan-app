@@ -521,7 +521,7 @@ No enum is defined for this yet; it is currently always the fixed value `0`.
 | Client id | `SCANPRO_CLIENT_ID` | your integration's public id |
 | Client secret | `SCANPRO_CLIENT_SECRET` | keep server-side / in your app only |
 | URL scheme | `SCANPRO_URL_SCHEME` | the scheme your app registers, e.g. `openScanPro` |
-| Telemetry endpoint | `SCANPRO_TELEMETRY_URL` | only for the port-exhaustion event; per environment |
+| Telemetry endpoint | `SCANPRO_TELEMETRY_URL` | where events go; per environment — see [Telemetry](#telemetry) |
 | Telemetry API key | `SCANPRO_TELEMETRY_API_KEY` | the only credential the telemetry endpoint takes |
 
 Not a credential, but part of the same onboarding, and it goes the other way: `externalScanFileType`
@@ -686,6 +686,9 @@ a time — so it ends exactly the way a real session does. Those meshes are sess
 PUT, and they never appear in the doctor's Cloud Drive. Form B (`--code`, no launch URL) has no
 `case.ID`, so there is no session to finish and both steps report as skipped.
 
+Every launch also reports one telemetry event, `scanner.connected`, before any of this — see
+[Telemetry](#telemetry).
+
 **Every backend request and response is logged in full** (method, URL, headers, body / status,
 headers, body) so you can see exactly what to send and what to expect. Swap the files in `fixtures/`
 to upload your own scans — `upper.stl` / `lower.stl` are the arches, `tooth.ply` / `gingiva.ply`
@@ -844,12 +847,9 @@ service reports it:
 | `severity` | `error` |
 | `eventData` | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
 
-The batch reports `app.name` as `ScanPro`, carries no `userId` (the service starts before anyone
-logs in, and a placeholder is worse than nothing) and no `scanner` object. It is sent only when
-both `SCANPRO_TELEMETRY_URL` and `SCANPRO_TELEMETRY_API_KEY` are set; otherwise the failure is just
-logged locally. `deviceId` is a SHA-256 of the OS machine id and `installationId` is generated once
-and persisted, both under `~/.sprintray-scanpro-example/` (the app's user-data directory when
-packaged).
+This one carries no `scanner` object — the failure has nothing to do with the scanner, and a batch
+sends `scanner` only for the events that require it. Everything else about how it is sent is in
+[Telemetry](#telemetry) below.
 
 ### Where this goes beyond the written contract
 
@@ -865,6 +865,59 @@ Four additions, all backwards-compatible — a client that ignores them still wo
 One deliberate difference in behaviour: a real service hands `argument` to ScanPro untouched, while
 this one decodes it and answers `400` when it is not base64 JSON. That is the point of a simulator —
 you find out here that the payload is malformed, instead of watching a scanner sit idle.
+
+## Telemetry
+
+Two events go to SprintRay's telemetry endpoint, both from moments where **no doctor is signed in
+yet** — so neither carries a `userId`, and neither waits for a token:
+
+| `eventName` | When | `eventData` |
+|---|---|---|
+| `scanner.connected` | every time the app is launched with a case | `{ connection, firmwareVersion }` |
+| `local_server.port_unavailable` | the whole port range is taken, so the local service never starts (see [above](#when-every-port-is-taken)) | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
+
+```sh
+SCANPRO_TELEMETRY_URL=https://<gateway-origin>/telemetry/<brand>/events
+SCANPRO_TELEMETRY_API_KEY=your-telemetry-api-key
+SCANPRO_TELEMETRY_CHANNEL=dev          # release | beta | internal | dev
+```
+
+Both values come from SprintRay, per environment. With either one missing nothing is sent — the
+event is logged locally and the app carries on.
+
+### `scanner.connected` on every launch
+
+A launch means a doctor started a case and the scanner is at the chair, so that is where this
+example reports the connection. **Every launch reports it, once**, whichever transport carried it:
+the OS URL scheme, the local service's `POST /scanpro/v1/start`, and the CLI handling a launch URL
+(Form A). A resident app handed a second case reports a second event under the same `sessionId` —
+that id identifies one run of the app, not one case.
+
+The send never blocks the launch: it is fired and left to finish on its own, so a slow or
+unreachable telemetry endpoint costs the doctor nothing. The window comes forward either way.
+
+`scanner.*` events require the batch to name the scanner (a batch without it is rejected with
+`SCANNER_REQUIRED`), and this example has no hardware to ask, so it reports what the `.env` says:
+
+```sh
+SCANPRO_SCANNER_SERIAL=SPX1-2024-0007391   # default: EXAMPLE-<first 12 chars of deviceId>
+SCANPRO_SCANNER_MODEL=ScanPro S1
+SCANPRO_SCANNER_FIRMWARE=1.0.0
+SCANPRO_SCANNER_CONNECTION=usb3            # usb2 | usb3 | usbc | wifi | unknown
+```
+
+In your own app all four come off the scanner you just enumerated. The serial matters most: report
+it **verbatim and unhashed** — it is the only thing tying this data to a physical device — and
+report `connection` as the link speed actually negotiated, not the socket the cable is in, because
+a device that fell back to USB 2 explains most of what gets reported as "the scan feels slow".
+
+### What identifies the machine
+
+`deviceId` is a SHA-256 of the OS machine id (macOS `IOPlatformUUID`, Windows `MachineGuid`), so no
+raw machine identifier leaves the host, and `installationId` is a uuid generated once. Both are
+persisted in `identity.json` under `~/.sprintray-scanpro-example/` — the app's user-data directory
+in a packaged build — which is what keeps them stable across restarts and upgrades. A machine whose
+id cannot be read falls back to a persisted random uuid: still stable for this install.
 
 ## Exit codes
 
