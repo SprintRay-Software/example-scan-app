@@ -11,8 +11,12 @@
     "scanpro-sim": "src/index.js"
   },
   "scripts": {
-    "app": "electron .",
+    "app": "electron . --env-file=.env.dev",
+    "app:dev": "electron . --env-file=.env.dev",
+    "app:staging": "electron . --env-file=.env.staging",
+    "app:prod": "electron . --env-file=.env.prod",
     "start": "node --env-file=.env src/index.js",
+    "start:staging": "node --env-file=.env.staging src/index.js",
     "serve": "node --env-file-if-exists=.env src/index.js serve",
     "register": "node --env-file-if-exists=.env src/index.js register",
     "unregister": "node --env-file-if-exists=.env src/index.js unregister",

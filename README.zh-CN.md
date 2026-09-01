@@ -499,15 +499,29 @@ payload 与上传调用中用到的数值枚举。
 前置条件:Node.js ≥ 18(`--env-file` 需 ≥ 20.6)。支持 macOS / Windows / Linux(scheme 注册以 macOS 为已验证路径)。
 
 ```sh
-cp .env.example .env      # 填入 origin、client id/secret、scheme
+cp .env.example .env.dev  # 填入 origin、client id/secret、scheme
 ```
+
+每个环境一个文件 —— `.env.dev`、`.env.staging`、`.env.prod` —— 都在 .gitignore 里(只有
+`.env.example` 会提交)。CLI 读 `.env`;桌面 UI 读对应 npm script 指定的那个文件。
 
 ## 桌面 UI(Electron)
 
 ```sh
 npm install               # 会安装 Electron(devDependency)
-npm run app               # 启动桌面 UI
+npm run app               # 启动桌面 UI,读 .env.dev
+npm run app:staging       # 读 .env.staging
+npm run app:prod          # 读 .env.prod
 ```
+
+想用别的文件不必改 package.json —— 上面这些 script 传的就是这个参数:
+
+```sh
+npm run app -- --env-file=.env.qa        # 也可以用 SCANPRO_ENV_FILE=.env.qa,
+                                         # 供无法传参的启动方式使用(URL scheme、Finder 双击)
+```
+
+**Configuration** 标题旁边会写出这次实际加载的是哪个文件,跑错环境一眼就能看见。
 
 同一套流程上有**两套界面**,任何时候**连续按五次 `d`** 即可互相切换:
 

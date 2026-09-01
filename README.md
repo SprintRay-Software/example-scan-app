@@ -535,15 +535,30 @@ Prerequisites: Node.js ≥ 18 (`--env-file` needs ≥ 20.6). macOS / Windows / L
 tested path for scheme registration).
 
 ```sh
-cp .env.example .env      # fill in origin, client id/secret, scheme
+cp .env.example .env.dev  # fill in origin, client id/secret, scheme
 ```
+
+One file per environment — `.env.dev`, `.env.staging`, `.env.prod` — all gitignored (`.env.example`
+is the only one committed). The CLI reads `.env`; the desktop UI reads the file its script names.
 
 ## Desktop UI (Electron)
 
 ```sh
 npm install               # pulls in Electron (a devDependency)
-npm run app               # launch the desktop UI
+npm run app               # launch the desktop UI against .env.dev
+npm run app:staging       # …or .env.staging
+npm run app:prod          # …or .env.prod
 ```
+
+Any other file works too, without touching package.json — the flag is what the scripts above pass:
+
+```sh
+npm run app -- --env-file=.env.qa        # SCANPRO_ENV_FILE=.env.qa also works, for launches
+                                         # that cannot pass arguments (URL scheme, Finder)
+```
+
+Which file was actually loaded is shown next to the **Configuration** heading, so a run pointed at
+the wrong environment is visible rather than guessed at.
 
 The window has **two skins over the same flow**, and **pressing `d` five times** switches between
 them at any time:

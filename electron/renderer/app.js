@@ -441,7 +441,12 @@ function updateServerChip(state) {
   $('cfg-client-id').value = d.clientId;
   $('cfg-client-secret').value = d.clientSecret;
   $('env-chip').textContent = 'origin: ' + (d.baseUrl || '').replace(/^https?:\/\//, '');
-  $('env-note').textContent = d.envFileFound ? 'prefilled from .env' : 'no .env found — enter values';
+  // Name the file that was actually read: with --env-file it is not necessarily `.env`, and a
+  // run pointed at the wrong environment has to be visible here.
+  const envName = (d.envFilePath || '').split(/[\\/]/).pop() || '.env';
+  $('env-note').textContent = d.envFileFound
+    ? `prefilled from ${envName}`
+    : `no ${envName} found — enter values`;
 
   const s = await window.scanpro.getSchemeStatus();
   updateSchemeChip(s);
