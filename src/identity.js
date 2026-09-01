@@ -14,7 +14,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
-import { run } from '../scheme/exec.js';
+import { run } from './scheme/exec.js';
 
 export const DEFAULT_STATE_DIR = join(homedir(), '.sprintray-scanpro-example');
 const IDENTITY_FILE = 'identity.json';

@@ -22,16 +22,18 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-import { loadConfig } from './config.js';
+import { loadConfig, packageVersion } from './config.js';
 import { parseTeethList } from './scan-report.js';
-import { fail } from './log.js';
+import { fail, info } from './log.js';
 import { runFlow } from './core/flow.js';
+import { reportScannerConnectedOnLaunch } from './telemetry.js';
 import { createConsoleReporter } from './core/console-reporter.js';
 import { SCHEME_COMMANDS, runSchemeCommand } from './scheme-cli.js';
 import { SERVE_COMMANDS, SERVE_USAGE, runServeCommand } from './serve-cli.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES_DIR = resolve(__dirname, '..', 'fixtures');
+const SIM_DIR = resolve(__dirname, '..');
+const FIXTURES_DIR = resolve(SIM_DIR, 'fixtures');
 
 const USAGE = `ScanPro desktop-app simulator
 
@@ -253,7 +255,19 @@ async function main() {
         ...run,
       };
 
+  // Form A is a launch: the browser handed this app a case, so the scanner is at the chair.
+  // Form B is a developer running the flow by hand — no launch, no event. Started before the
+  // flow so it overlaps with it, awaited before exiting so the POST is not cut off.
+  const launchReported = hasFormA
+    ? reportScannerConnectedOnLaunch({
+        env: process.env,
+        defaults: { appVersion: packageVersion(), installPath: SIM_DIR },
+        log: info,
+      })
+    : null;
+
   const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR });
+  await launchReported;
   process.exit(summary.ok ? 0 : 1);
 }
 

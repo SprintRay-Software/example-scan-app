@@ -1,6 +1,10 @@
 // Reads and validates required env vars. Exits(1) with a clear message if any missing.
 // Env is expected to be loaded via `node --env-file=.env` (Node 20.6+); no dotenv dependency.
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { fail } from './log.js';
 import { DEFAULT_SCAN_MODE, DEFAULT_SCAN_FILE_TYPES } from './scan-report.js';
 
@@ -48,6 +52,17 @@ export function loadConfig(env = process.env) {
   };
 }
 
+// The version this app reports as its own — /status, and app.version on every telemetry
+// batch. Read from package.json so a build never carries a second copy to keep in sync.
+export function packageVersion() {
+  try {
+    const pkg = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
+    return JSON.parse(readFileSync(pkg, 'utf8')).version;
+  } catch {
+    return undefined;
+  }
+}
+
 export function normalizeBaseUrl(value) {
   return String(value)
     .trim()
@@ -72,6 +87,39 @@ function intEnv(value, fallback) {
 }
 
 /**
+ * Telemetry settings: where events go, and the context every batch carries about this app,
+ * this machine and the scanner it is attached to. Nothing here is required — with no endpoint
+ * and no key the events are logged locally and never sent, which is the state a machine with
+ * an unfilled .env is in.
+ *
+ * @param {Record<string, string|undefined>} env
+ * @param {{ appVersion?: string, installPath?: string, stateDir?: string }} [defaults]
+ */
+export function loadTelemetryConfig(env = process.env, defaults = {}) {
+  return {
+    // No default: SprintRay issues the endpoint and the key per environment.
+    url: String(env.SCANPRO_TELEMETRY_URL ?? '').trim(),
+    apiKey: String(env.SCANPRO_TELEMETRY_API_KEY ?? '').trim(),
+    appVersion: String(env.SCANPRO_REPORTED_VERSION ?? defaults.appVersion ?? '0.0.0').trim(),
+    installPath: String(env.SCANPRO_INSTALL_PATH ?? defaults.installPath ?? process.cwd()).trim(),
+    build: String(env.SCANPRO_BUILD ?? '').trim() || undefined,
+    channel: String(env.SCANPRO_TELEMETRY_CHANNEL ?? 'dev').trim() || undefined,
+    // Where identity.json lives — the file holding the stable deviceId / installationId the
+    // batch is keyed on.
+    stateDir: env.SCANPRO_STATE_DIR || defaults.stateDir,
+    // What this install reports about its scanner. A real app fills these from the hardware it
+    // enumerated; here they come from the .env, and an unset one falls back in telemetry.js to
+    // a stand-in for the scanner that is not on the desk.
+    scanner: {
+      serialNumber: String(env.SCANPRO_SCANNER_SERIAL ?? '').trim() || undefined,
+      model: String(env.SCANPRO_SCANNER_MODEL ?? '').trim() || undefined,
+      firmwareVersion: String(env.SCANPRO_SCANNER_FIRMWARE ?? '').trim() || undefined,
+      connection: String(env.SCANPRO_SCANNER_CONNECTION ?? '').trim() || undefined,
+    },
+  };
+}
+
+/**
  * Parse the local-service settings out of an env-like object.
  * @param {Record<string, string|undefined>} env
  * @param {{ appVersion?: string, installPath?: string, stateDir?: string }} [defaults]
@@ -93,15 +141,8 @@ export function loadLocalServerConfig(env = process.env, defaults = {}) {
     // Version reported by /status. Real ScanPro reports its own; this app reports its own too.
     reportedVersion: String(env.SCANPRO_REPORTED_VERSION ?? defaults.appVersion ?? '0.0.0').trim(),
     stateDir: env.SCANPRO_STATE_DIR || defaults.stateDir,
-    telemetry: {
-      // No default: SprintRay issues the endpoint and the key per environment. Unset means
-      // the port-exhaustion event is logged locally and not sent.
-      url: String(env.SCANPRO_TELEMETRY_URL ?? '').trim(),
-      apiKey: String(env.SCANPRO_TELEMETRY_API_KEY ?? '').trim(),
-      appVersion: String(env.SCANPRO_REPORTED_VERSION ?? defaults.appVersion ?? '0.0.0').trim(),
-      installPath: String(env.SCANPRO_INSTALL_PATH ?? defaults.installPath ?? process.cwd()).trim(),
-      build: String(env.SCANPRO_BUILD ?? '').trim() || undefined,
-      channel: String(env.SCANPRO_TELEMETRY_CHANNEL ?? 'dev').trim() || undefined,
-    },
+    // The same telemetry settings the launch event uses; unset endpoint or key means the
+    // port-exhaustion event is logged locally and not sent.
+    telemetry: loadTelemetryConfig(env, defaults),
   };
 }

@@ -486,7 +486,7 @@ payload 与上传调用中用到的数值枚举。
 | Client ID | `SCANPRO_CLIENT_ID` | 你集成的公开 id |
 | Client Secret | `SCANPRO_CLIENT_SECRET` | 仅保存在服务端 / 你的应用内 |
 | URL scheme | `SCANPRO_URL_SCHEME` | 你的应用注册的 scheme,如 `openScanPro` |
-| 遥测接口地址 | `SCANPRO_TELEMETRY_URL` | 仅用于端口耗尽事件;按环境下发 |
+| 遥测接口地址 | `SCANPRO_TELEMETRY_URL` | 事件上报地址,按环境下发 —— 见[遥测](#遥测) |
 | 遥测 API key | `SCANPRO_TELEMETRY_API_KEY` | 遥测接口唯一的凭据 |
 
 还有一项不属于凭据,而且方向相反,但属于同一批联调事项:`externalScanFileType` 每次上传必传,
@@ -630,6 +630,8 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 整个流程与真实会话完全一致。这些网格属于会话元数据:PUT 之后没有任何后续调用,也不会出现在医生的
 Cloud Drive 里。形式 B(`--code`,无启动 URL)没有 `case.ID`,也就没有会话可结束,这两步都会标记为
 skipped。
+
+在这一切之前,每次被拉起还会上报一条遥测事件 `scanner.connected`,见[遥测](#遥测)。
 
 **每个后端请求与响应都会被完整打印**(方法、URL、请求头、请求体 / 状态码、响应头、响应体),
 让你清楚地看到该发送什么、该期望什么。把 `fixtures/` 里的文件替换成你自己的扫描件即可测试其它数据 ——
@@ -775,10 +777,8 @@ curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
 | `severity` | `error` |
 | `eventData` | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
 
-批次中 `app.name` 填 `ScanPro`,不带 `userId`(服务在任何人登录之前就已启动,填占位值比不填更糟),
-也不带 `scanner`。只有同时配置了 `SCANPRO_TELEMETRY_URL` 与 `SCANPRO_TELEMETRY_API_KEY` 才会发送,
-否则只记本地日志。`deviceId` 是操作系统机器标识的 SHA-256,`installationId` 生成一次后落盘,
-两者都存放在 `~/.sprintray-scanpro-example/`(打包版则在应用的用户数据目录)。
+这一条不带 `scanner` —— 该故障与口扫设备无关,而批次只在需要的事件上带 `scanner`。其余发送规则见
+下面的[遥测](#遥测)。
 
 ### 相对文档契约的增补
 
@@ -793,6 +793,53 @@ curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
 
 有一处行为是刻意不同的:真实服务会把 `argument` 原样交给 ScanPro,而本服务会解码它,解不开就直接返回
 `400`。这正是模拟器的价值 —— 让你在这里就发现 payload 有问题,而不是盯着一个毫无反应的扫描仪。
+
+## 遥测
+
+有两个事件会发往 SprintRay 的遥测接口,它们都发生在**还没有医生登录**的时刻 —— 所以都不带 `userId`,
+也都不等待 token:
+
+| `eventName` | 何时上报 | `eventData` |
+|---|---|---|
+| `scanner.connected` | 每次应用被带着病例拉起时 | `{ connection, firmwareVersion }` |
+| `local_server.port_unavailable` | 端口区间被占满,本机服务未能启动(见[上文](#端口区间被占满时)) | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
+
+```sh
+SCANPRO_TELEMETRY_URL=https://<网关地址>/telemetry/<brand>/events
+SCANPRO_TELEMETRY_API_KEY=你的遥测-api-key
+SCANPRO_TELEMETRY_CHANNEL=dev          # release | beta | internal | dev
+```
+
+两个值都由 SprintRay 按环境下发。任意一个缺失就不会发送 —— 事件只记本地日志,应用照常运行。
+
+### 每次被拉起上报 `scanner.connected`
+
+被拉起意味着医生开了一个病例、口扫设备就在椅旁,所以本示例把连接上报放在这个时刻。**每次拉起上报一条**,
+无论走哪条路径:系统 URL scheme、本机服务的 `POST /scanpro/v1/start`,以及 CLI 处理启动 URL(形式 A)。
+常驻的应用再接到一个病例就再报一条,`sessionId` 不变 —— 该 id 标识的是应用的一次运行,不是一个病例。
+
+发送不会阻塞拉起:调用发出后就不再等待,所以遥测接口慢或不可达都不会让医生多等,窗口照常弹到前台。
+
+`scanner.*` 事件要求批次里必须有口扫设备信息(缺失会被拒收,错误码 `SCANNER_REQUIRED`),而本示例没有
+真实硬件可问,于是取 `.env` 里配置的值:
+
+```sh
+SCANPRO_SCANNER_SERIAL=SPX1-2024-0007391   # 默认 EXAMPLE-<deviceId 前 12 位>
+SCANPRO_SCANNER_MODEL=ScanPro S1
+SCANPRO_SCANNER_FIRMWARE=1.0.0
+SCANPRO_SCANNER_CONNECTION=usb3            # usb2 | usb3 | usbc | wifi | unknown
+```
+
+在你自己的应用里,这四个值都应来自刚枚举到的那台设备。序列号最关键:**原样上报,不要做哈希** ——
+它是把这批数据关联到具体物理设备的唯一依据;`connection` 请填实际协商的链路速率,而不是插口的物理类型 ——
+降级到 USB 2 能解释绝大多数"扫描感觉很慢"的反馈。
+
+### 机器是怎么被标识的
+
+`deviceId` 是操作系统机器标识(macOS `IOPlatformUUID`、Windows `MachineGuid`)的 SHA-256,原始机器标识
+不会离开本机;`installationId` 是只生成一次的 uuid。两者都写在 `~/.sprintray-scanpro-example/` 下的
+`identity.json`(打包版则在应用的用户数据目录),这正是它们能在重启、升级后保持不变的原因。读不到机器
+标识的机器会退化为一个落盘的随机 uuid:对这次安装依然稳定。
 
 ## 退出码
 

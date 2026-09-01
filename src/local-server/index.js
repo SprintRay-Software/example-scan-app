@@ -10,8 +10,8 @@ import {
   PortRangeExhaustedError,
   startLocalServer,
 } from './server.js';
-import { loadIdentity } from './identity.js';
-import { reportPortUnavailable } from './telemetry.js';
+import { loadIdentity } from '../identity.js';
+import { reportPortUnavailable } from '../telemetry.js';
 
 export { API_PREFIX, SERVICE_NAME } from './routes.js';
 export { DEFAULT_PORT_RANGE_END, DEFAULT_PORT_RANGE_START } from './server.js';
