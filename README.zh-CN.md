@@ -482,11 +482,10 @@ payload 与上传调用中用到的数值枚举。
 | 值 | 环境变量 | 说明 |
 |---|---|---|
 | 网关 origin | `SCANPRO_BASE_URL` | 按环境固定(dev / staging / prod,见上表) |
-| 网关 API key | `SCANPRO_API_KEY` | 作为 `x-api-key` 发送;标识调用方并决定限流额度 |
+| 网关 API key | `SCANPRO_API_KEY` | 每次调用(含遥测)都作为 `x-api-key` 发送;标识调用方并决定限流额度 |
 | Client ID | `SCANPRO_CLIENT_ID` | 你集成的公开 id |
 | Client Secret | `SCANPRO_CLIENT_SECRET` | 仅保存在服务端 / 你的应用内 |
 | URL scheme | `SCANPRO_URL_SCHEME` | 你的应用注册的 scheme,如 `openScanPro` |
-| 遥测接口地址 | `SCANPRO_TELEMETRY_URL` | 事件上报地址,按环境下发;同一个网关、同一把 key —— 见[遥测](#遥测) |
 
 还有一项不属于凭据,而且方向相反,但属于同一批联调事项:`externalScanFileType` 每次上传必传,
 所以请把**你的应用会用到的名字清单**(连同扫描结束调用里的 `scanMode` 名字)提供给 SprintRay,
@@ -803,14 +802,24 @@ curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
 | `scanner.connected` | 每次应用被带着病例拉起时 —— 拉起那一刻打时间戳,换取 token 之后发送 | `{ connection, firmwareVersion }` |
 | `local_server.port_unavailable` | 端口区间被占满,本机服务未能启动(见[上文](#端口区间被占满时)) | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
 
-```sh
-SCANPRO_TELEMETRY_URL=https://<网关地址>/telemetry/<brand>/events
-SCANPRO_TELEMETRY_CHANNEL=dev          # release | beta | internal | dev
+**不需要任何额外配置。** 遥测接口就是**同一个 API 网关上的一个路径**,和换取 token、上传走同一把
+**`SCANPRO_API_KEY`**,所以地址直接由本应用已经指向的那个 origin 推导出来:
+
+```
+${SCANPRO_BASE_URL}/telemetry/allied-star/events
 ```
 
-遥测接口就是**同一个 API 网关上的一个路径**,和换取 token、上传走同一把 **`SCANPRO_API_KEY`** ——
-没有单独的遥测凭据要申请,key 不对时网关照常返回 `403 {"message":"Forbidden"}`。地址由 SprintRay 按环境
-下发;没有配地址就不会发送 —— 事件只记本地日志,应用照常运行。
+`SCANPRO_BASE_URL` 指向 dev、staging 还是生产,遥测就跟着走 —— 在桌面 UI 里临时改过的 origin 也一样,
+那一次运行以 UI 里的为准。key 不对时网关照常返回 `403 {"message":"Forbidden"}`;完全没有 origin 就不发送 ——
+事件只记本地日志,应用照常运行。
+
+默认值覆盖不到的情况,有三个选填项:
+
+| | |
+|---|---|
+| `SCANPRO_TELEMETRY_BRAND` | 你这个集成在路径里的 brand 段,如果 SprintRay 给你登记的名字不是本示例写死的那个(默认 `allied-star`) |
+| `SCANPRO_TELEMETRY_URL` | 整个地址,如果这条路由以后搬离这个网关 |
+| `SCANPRO_TELEMETRY_CHANNEL` | `release` / `beta` / `internal` / `dev` —— 事件来自哪条构建流。本示例固定上报 `dev`,因为它发出的一切都是测试流量;你的应用上报自己的 |
 
 ### 每次被拉起上报 `scanner.connected`
 

@@ -521,7 +521,6 @@ No enum is defined for this yet; it is currently always the fixed value `0`.
 | Client id | `SCANPRO_CLIENT_ID` | your integration's public id |
 | Client secret | `SCANPRO_CLIENT_SECRET` | keep server-side / in your app only |
 | URL scheme | `SCANPRO_URL_SCHEME` | the scheme your app registers, e.g. `openScanPro` |
-| Telemetry endpoint | `SCANPRO_TELEMETRY_URL` | where events go; per environment, same gateway and same key — see [Telemetry](#telemetry) |
 
 Not a credential, but part of the same onboarding, and it goes the other way: `externalScanFileType`
 is required on every upload, so hand SprintRay **the list of names your app uses** — those, plus the
@@ -875,15 +874,26 @@ Two events go to SprintRay's telemetry endpoint:
 | `scanner.connected` | every time the app is launched with a case — stamped at the launch, sent once the code has been exchanged | `{ connection, firmwareVersion }` |
 | `local_server.port_unavailable` | the whole port range is taken, so the local service never starts (see [above](#when-every-port-is-taken)) | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
 
-```sh
-SCANPRO_TELEMETRY_URL=https://<gateway-origin>/telemetry/<brand>/events
-SCANPRO_TELEMETRY_CHANNEL=dev          # release | beta | internal | dev
+**There is nothing to configure.** The endpoint is a **path on the same API gateway** as the token
+exchange and the uploads, behind the **same `SCANPRO_API_KEY`**, so it is derived from the origin
+this app is already pointed at:
+
+```
+${SCANPRO_BASE_URL}/telemetry/allied-star/events
 ```
 
-The endpoint is a **path on the same API gateway** as the token exchange and the uploads, and it
-takes the **same `SCANPRO_API_KEY`** — there is no separate telemetry credential to ask for, and a
-wrong key is the usual `403 {"message":"Forbidden"}` from the gateway. SprintRay gives you the URL
-per environment; without it nothing is sent — the event is logged locally and the app carries on.
+Point `SCANPRO_BASE_URL` at dev, staging or production and telemetry follows — including a per-run
+origin typed into the desktop UI, which wins over the `.env` for that run. A wrong key is the usual
+`403 {"message":"Forbidden"}` from the gateway; with no origin at all nothing is sent — the event is
+logged locally and the app carries on.
+
+Three optional settings cover what the default cannot know:
+
+| | |
+|---|---|
+| `SCANPRO_TELEMETRY_BRAND` | your integration's segment of the path, if SprintRay registered you under another name (default `allied-star`) |
+| `SCANPRO_TELEMETRY_URL` | the whole endpoint, if the route ever moves off this gateway |
+| `SCANPRO_TELEMETRY_CHANNEL` | `release` / `beta` / `internal` / `dev` — which build stream the events came from. This example always reports `dev`, because everything it sends is test traffic; your app reports its own |
 
 ### `scanner.connected` on every launch
 

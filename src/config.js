@@ -86,6 +86,30 @@ function intEnv(value, fallback) {
   return Number.isInteger(n) ? n : fallback;
 }
 
+// The brand segment of the telemetry path — the integration SprintRay registered these events
+// against, not a value a client may choose. This example is the Allied Star / ScanPro one, so
+// that is its default; another integration overrides it with SCANPRO_TELEMETRY_BRAND.
+export const DEFAULT_TELEMETRY_BRAND = 'allied-star';
+
+// Test traffic, always: see the note on `channel` below.
+export const DEFAULT_TELEMETRY_CHANNEL = 'dev';
+
+/**
+ * Where telemetry goes, given the gateway origin this app is already pointed at. The route
+ * lives on the same gateway behind the same api key, so nothing about it has to be configured
+ * separately — get the origin right and telemetry follows.
+ *
+ * @param {string} [baseUrl] gateway origin, in any of the shapes normalizeBaseUrl accepts
+ * @param {string} [brand]   integration segment; defaults to this example's own
+ * @returns {string} the endpoint, or '' when there is no origin to build it from
+ */
+export function telemetryEndpoint(baseUrl, brand) {
+  const origin = normalizeBaseUrl(baseUrl ?? '');
+  if (!origin) return '';
+  const segment = String(brand ?? '').trim() || DEFAULT_TELEMETRY_BRAND;
+  return `${origin}/telemetry/${segment}/events`;
+}
+
 /**
  * Telemetry settings: where events go, and the context every batch carries about this app,
  * this machine and the scanner it is attached to. Nothing here is required — with no endpoint
@@ -97,8 +121,12 @@ function intEnv(value, fallback) {
  */
 export function loadTelemetryConfig(env = process.env, defaults = {}) {
   return {
-    // No default: SprintRay issues the endpoint per environment.
-    url: String(env.SCANPRO_TELEMETRY_URL ?? '').trim(),
+    // Derived, not configured: the telemetry route is a path on the very gateway this app
+    // already talks to, so SCANPRO_BASE_URL is all it takes. SCANPRO_TELEMETRY_URL overrides
+    // it if SprintRay ever moves the route somewhere else.
+    url:
+      String(env.SCANPRO_TELEMETRY_URL ?? '').trim() ||
+      telemetryEndpoint(env.SCANPRO_BASE_URL, env.SCANPRO_TELEMETRY_BRAND),
     // The telemetry route sits on the same API gateway as every other call, behind the same
     // key — there is no separate telemetry credential to ask for. SCANPRO_TELEMETRY_API_KEY
     // is only an escape hatch for the day SprintRay issues one.
@@ -107,7 +135,10 @@ export function loadTelemetryConfig(env = process.env, defaults = {}) {
     appVersion: String(env.SCANPRO_REPORTED_VERSION ?? defaults.appVersion ?? '0.0.0').trim(),
     installPath: String(env.SCANPRO_INSTALL_PATH ?? defaults.installPath ?? process.cwd()).trim(),
     build: String(env.SCANPRO_BUILD ?? '').trim() || undefined,
-    channel: String(env.SCANPRO_TELEMETRY_CHANNEL ?? 'dev').trim() || undefined,
+    // This app is a simulator: whatever it sends is test traffic, whether it runs from source
+    // or out of a packaged build handed to a tester, so it always reports the channel that
+    // lets SprintRay keep it out of the dashboards. A real app reports its own build stream.
+    channel: String(env.SCANPRO_TELEMETRY_CHANNEL ?? '').trim() || DEFAULT_TELEMETRY_CHANNEL,
     // Where identity.json lives — the file holding the stable deviceId / installationId the
     // batch is keyed on.
     stateDir: env.SCANPRO_STATE_DIR || defaults.stateDir,
