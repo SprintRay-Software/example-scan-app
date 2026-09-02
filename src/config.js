@@ -87,9 +87,9 @@ function intEnv(value, fallback) {
 }
 
 // The brand segment of the telemetry path — the integration SprintRay registered these events
-// against, not a value a client may choose. This example is the Allied Star / ScanPro one, so
-// that is its default; another integration overrides it with SCANPRO_TELEMETRY_BRAND.
-export const DEFAULT_TELEMETRY_BRAND = 'allied-star';
+// against, not a value a client may choose: a brand the server does not know is refused with
+// `400 Unknown telemetry brand`. Another integration overrides it with SCANPRO_TELEMETRY_BRAND.
+export const DEFAULT_TELEMETRY_BRAND = 'SprintRay';
 
 // Test traffic, always: see the note on `channel` below.
 export const DEFAULT_TELEMETRY_CHANNEL = 'dev';
