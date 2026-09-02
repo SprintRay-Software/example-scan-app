@@ -517,12 +517,11 @@ No enum is defined for this yet; it is currently always the fixed value `0`.
 | Value | Env var | Notes |
 |---|---|---|
 | Gateway origin | `SCANPRO_BASE_URL` | fixed per environment (dev / staging / prod — see above) |
-| Gateway API key | `SCANPRO_API_KEY` | sent as `x-api-key`; identifies the caller and selects its usage plan |
+| Gateway API key | `SCANPRO_API_KEY` | sent as `x-api-key` on every call, telemetry included; identifies the caller and selects its usage plan |
 | Client id | `SCANPRO_CLIENT_ID` | your integration's public id |
 | Client secret | `SCANPRO_CLIENT_SECRET` | keep server-side / in your app only |
 | URL scheme | `SCANPRO_URL_SCHEME` | the scheme your app registers, e.g. `openScanPro` |
-| Telemetry endpoint | `SCANPRO_TELEMETRY_URL` | where events go; per environment — see [Telemetry](#telemetry) |
-| Telemetry API key | `SCANPRO_TELEMETRY_API_KEY` | the only credential the telemetry endpoint takes |
+| Telemetry endpoint | `SCANPRO_TELEMETRY_URL` | where events go; per environment, same gateway and same key — see [Telemetry](#telemetry) |
 
 Not a credential, but part of the same onboarding, and it goes the other way: `externalScanFileType`
 is required on every upload, so hand SprintRay **the list of names your app uses** — those, plus the
@@ -878,12 +877,13 @@ Two events go to SprintRay's telemetry endpoint:
 
 ```sh
 SCANPRO_TELEMETRY_URL=https://<gateway-origin>/telemetry/<brand>/events
-SCANPRO_TELEMETRY_API_KEY=your-telemetry-api-key
 SCANPRO_TELEMETRY_CHANNEL=dev          # release | beta | internal | dev
 ```
 
-Both values come from SprintRay, per environment. With either one missing nothing is sent — the
-event is logged locally and the app carries on.
+The endpoint is a **path on the same API gateway** as the token exchange and the uploads, and it
+takes the **same `SCANPRO_API_KEY`** — there is no separate telemetry credential to ask for, and a
+wrong key is the usual `403 {"message":"Forbidden"}` from the gateway. SprintRay gives you the URL
+per environment; without it nothing is sent — the event is logged locally and the app carries on.
 
 ### `scanner.connected` on every launch
 

@@ -486,8 +486,7 @@ payload 与上传调用中用到的数值枚举。
 | Client ID | `SCANPRO_CLIENT_ID` | 你集成的公开 id |
 | Client Secret | `SCANPRO_CLIENT_SECRET` | 仅保存在服务端 / 你的应用内 |
 | URL scheme | `SCANPRO_URL_SCHEME` | 你的应用注册的 scheme,如 `openScanPro` |
-| 遥测接口地址 | `SCANPRO_TELEMETRY_URL` | 事件上报地址,按环境下发 —— 见[遥测](#遥测) |
-| 遥测 API key | `SCANPRO_TELEMETRY_API_KEY` | 遥测接口唯一的凭据 |
+| 遥测接口地址 | `SCANPRO_TELEMETRY_URL` | 事件上报地址,按环境下发;同一个网关、同一把 key —— 见[遥测](#遥测) |
 
 还有一项不属于凭据,而且方向相反,但属于同一批联调事项:`externalScanFileType` 每次上传必传,
 所以请把**你的应用会用到的名字清单**(连同扫描结束调用里的 `scanMode` 名字)提供给 SprintRay,
@@ -806,11 +805,12 @@ curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
 
 ```sh
 SCANPRO_TELEMETRY_URL=https://<网关地址>/telemetry/<brand>/events
-SCANPRO_TELEMETRY_API_KEY=你的遥测-api-key
 SCANPRO_TELEMETRY_CHANNEL=dev          # release | beta | internal | dev
 ```
 
-两个值都由 SprintRay 按环境下发。任意一个缺失就不会发送 —— 事件只记本地日志,应用照常运行。
+遥测接口就是**同一个 API 网关上的一个路径**,和换取 token、上传走同一把 **`SCANPRO_API_KEY`** ——
+没有单独的遥测凭据要申请,key 不对时网关照常返回 `403 {"message":"Forbidden"}`。地址由 SprintRay 按环境
+下发;没有配地址就不会发送 —— 事件只记本地日志,应用照常运行。
 
 ### 每次被拉起上报 `scanner.connected`
 
