@@ -14,7 +14,8 @@
 //                                  ScanPro_Local_HTTP_Server.md §4 and the spec's §6.2.
 //
 // Rules this file follows from the telemetry spec:
-//   - `app.name` is always `ScanPro`, whichever part of the app reports (§4).
+//   - `app.name` is this integration's registered application name, whichever part of the app
+//     reports (§4) — the launcher and the resident service share it.
 //   - `userId` is the doctor's SprintRay id, verbatim off the access token's `sub` claim, and
 //     it belongs to the launch that produced it — never filled in later from whoever happens
 //     to be signed in at flush time (§5.4). local_server.port_unavailable has no user at all
@@ -32,7 +33,9 @@ import { loadIdentity } from './identity.js';
 import { run } from './scheme/exec.js';
 
 const TELEMETRY_TIMEOUT_MS = 10_000;
-export const APP_NAME = 'ScanPro';
+// The application name SprintRay registered for this integration. Like the brand it is not a
+// free-text label: the server checks it against the integration's allow-list.
+export const APP_NAME = 'SprintRayScanApp';
 export const PORT_UNAVAILABLE_EVENT = 'local_server.port_unavailable';
 export const SCANNER_CONNECTED_EVENT = 'scanner.connected';
 

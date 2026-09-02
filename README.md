@@ -879,7 +879,7 @@ exchange and the uploads, behind the **same `SCANPRO_API_KEY`**, so it is derive
 this app is already pointed at:
 
 ```
-${SCANPRO_BASE_URL}/telemetry/allied-star/events
+${SCANPRO_BASE_URL}/telemetry/SprintRay/events
 ```
 
 Point `SCANPRO_BASE_URL` at dev, staging or production and telemetry follows — including a per-run
@@ -891,7 +891,7 @@ Three optional settings cover what the default cannot know:
 
 | | |
 |---|---|
-| `SCANPRO_TELEMETRY_BRAND` | your integration's segment of the path, if SprintRay registered you under another name (default `allied-star`) |
+| `SCANPRO_TELEMETRY_BRAND` | your integration's segment of the path, if SprintRay registered you under another name (default `SprintRay`). It is checked, not free text — an unknown brand is refused with `400 Unknown telemetry brand` |
 | `SCANPRO_TELEMETRY_URL` | the whole endpoint, if the route ever moves off this gateway |
 | `SCANPRO_TELEMETRY_CHANNEL` | `release` / `beta` / `internal` / `dev` — which build stream the events came from. This example always reports `dev`, because everything it sends is test traffic; your app reports its own |
 

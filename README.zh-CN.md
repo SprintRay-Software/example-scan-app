@@ -806,7 +806,7 @@ curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
 **`SCANPRO_API_KEY`**,所以地址直接由本应用已经指向的那个 origin 推导出来:
 
 ```
-${SCANPRO_BASE_URL}/telemetry/allied-star/events
+${SCANPRO_BASE_URL}/telemetry/SprintRay/events
 ```
 
 `SCANPRO_BASE_URL` 指向 dev、staging 还是生产,遥测就跟着走 —— 在桌面 UI 里临时改过的 origin 也一样,
@@ -817,7 +817,7 @@ ${SCANPRO_BASE_URL}/telemetry/allied-star/events
 
 | | |
 |---|---|
-| `SCANPRO_TELEMETRY_BRAND` | 你这个集成在路径里的 brand 段,如果 SprintRay 给你登记的名字不是本示例写死的那个(默认 `allied-star`) |
+| `SCANPRO_TELEMETRY_BRAND` | 你这个集成在路径里的 brand 段,如果 SprintRay 给你登记的名字不是本示例写死的那个(默认 `SprintRay`)。它是受校验的,不是自由文本 —— 服务端不认识的 brand 会被 `400 Unknown telemetry brand` 拒掉 |
 | `SCANPRO_TELEMETRY_URL` | 整个地址,如果这条路由以后搬离这个网关 |
 | `SCANPRO_TELEMETRY_CHANNEL` | `release` / `beta` / `internal` / `dev` —— 事件来自哪条构建流。本示例固定上报 `dev`,因为它发出的一切都是测试流量;你的应用上报自己的 |
 
