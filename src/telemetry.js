@@ -26,7 +26,7 @@
 import { randomUUID } from 'node:crypto';
 import { arch, platform, release } from 'node:os';
 
-import { loadTelemetryConfig } from './config.js';
+import { loadTelemetryConfig, telemetryEndpoint } from './config.js';
 import { httpJson } from './core/net.js';
 import { loadIdentity } from './identity.js';
 import { run } from './scheme/exec.js';
@@ -112,7 +112,10 @@ async function buildDevice(deviceId) {
  * @returns {Promise<{ ok: boolean, status?: number, body?: string, error?: string, skipped?: string }>}
  */
 export async function sendTelemetryBatch({ url, apiKey, app, device, scanner, events, reporter }) {
-  if (!url || !apiKey) return { ok: false, skipped: 'telemetry endpoint or api key not configured' };
+  // Name the missing piece. Both are derived from settings the app needs anyway, so "not
+  // configured" on its own sends the reader looking for a telemetry setting that is not there.
+  if (!url) return { ok: false, skipped: 'no endpoint to send to (SCANPRO_BASE_URL is not set)' };
+  if (!apiKey) return { ok: false, skipped: 'no api key (SCANPRO_API_KEY is not set)' };
 
   // `scanner` is sent only when the batch needs it: it is required by scanner.* / scan.*
   // events and pointless on the others, and the batch describes exactly one scanner (§5.3).
@@ -309,15 +312,23 @@ export function createLaunchTelemetry({ env, defaults = {}, log = () => {} } = {
   const event = newScannerConnectedEvent();
   const launch = { event, sent: false };
 
-  launch.send = async ({ userId, reporter } = {}) => {
+  launch.send = async ({ userId, reporter, baseUrl } = {}) => {
     if (launch.sent) return { ok: false, skipped: 'already sent for this launch' };
     launch.sent = true;
 
     try {
       const config = loadTelemetryConfig(env, defaults);
+      // Telemetry follows the gateway the run actually used, which is not always the one in the
+      // env file: the desktop UI lets a tester point the origin field somewhere else per run.
+      // An explicit SCANPRO_TELEMETRY_URL still wins over both.
+      const url =
+        String((env ?? process.env).SCANPRO_TELEMETRY_URL ?? '').trim() ||
+        telemetryEndpoint(baseUrl, (env ?? process.env).SCANPRO_TELEMETRY_BRAND) ||
+        config.url;
       const identity = await loadIdentity(config.stateDir);
       const result = await reportScannerConnected({
         ...config,
+        url,
         installationId: identity.installationId,
         deviceId: identity.deviceId,
         userId,

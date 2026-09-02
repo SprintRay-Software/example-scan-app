@@ -174,7 +174,7 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
     const userId = subjectFromAccessToken(tokens.access_token);
     reporter.phase('telemetry', 'active', 'Reporting scanner.connected');
     reporter.step(`Reporting scanner.connected${userId ? ` for ${userId}` : ' (no userId on the token)'}`);
-    const result = await launchTelemetry.send({ userId, reporter });
+    const result = await launchTelemetry.send({ userId, reporter, baseUrl });
     if (result.ok) {
       reporter.ok(`scanner.connected accepted (HTTP ${result.status})`);
       reporter.phase('telemetry', 'done', userId ? `userId=${userId}` : 'no userId');
