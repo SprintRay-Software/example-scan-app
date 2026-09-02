@@ -97,9 +97,13 @@ function intEnv(value, fallback) {
  */
 export function loadTelemetryConfig(env = process.env, defaults = {}) {
   return {
-    // No default: SprintRay issues the endpoint and the key per environment.
+    // No default: SprintRay issues the endpoint per environment.
     url: String(env.SCANPRO_TELEMETRY_URL ?? '').trim(),
-    apiKey: String(env.SCANPRO_TELEMETRY_API_KEY ?? '').trim(),
+    // The telemetry route sits on the same API gateway as every other call, behind the same
+    // key — there is no separate telemetry credential to ask for. SCANPRO_TELEMETRY_API_KEY
+    // is only an escape hatch for the day SprintRay issues one.
+    apiKey:
+      String(env.SCANPRO_TELEMETRY_API_KEY ?? '').trim() || String(env.SCANPRO_API_KEY ?? '').trim(),
     appVersion: String(env.SCANPRO_REPORTED_VERSION ?? defaults.appVersion ?? '0.0.0').trim(),
     installPath: String(env.SCANPRO_INSTALL_PATH ?? defaults.installPath ?? process.cwd()).trim(),
     build: String(env.SCANPRO_BUILD ?? '').trim() || undefined,
