@@ -5,7 +5,9 @@
 //   scanner.connected              every time the app is launched with a case (§6.2). A launch
 //                                  means the scanner is at the chair and about to be used, so
 //                                  this is what makes a case in SprintRay line up with the
-//                                  machine and the firmware that captured it.
+//                                  machine and the firmware that captured it. Stamped when the
+//                                  launch arrives, sent once the launch's code has been
+//                                  exchanged — that is when the doctor's `userId` exists.
 //   local_server.port_unavailable  every port in the range is taken, so the resident service
 //                                  never starts and the web app's probe finds nothing. To the
 //                                  doctor that looks like "clicking Scan does nothing" — see
@@ -13,8 +15,10 @@
 //
 // Rules this file follows from the telemetry spec:
 //   - `app.name` is always `ScanPro`, whichever part of the app reports (§4).
-//   - No `userId`: both events happen before the code is exchanged, and a placeholder is worse
-//     than nothing (§5.4).
+//   - `userId` is the doctor's SprintRay id, verbatim off the access token's `sub` claim, and
+//     it belongs to the launch that produced it — never filled in later from whoever happens
+//     to be signed in at flush time (§5.4). local_server.port_unavailable has no user at all
+//     (the service starts before anyone signs in) and sends none: absent beats a placeholder.
 //   - `scanner` travels with `scanner.*` events and only with them — a batch carrying one
 //     without it is rejected with SCANNER_REQUIRED (§5.3).
 //   - Silent, never blocking, 10 s timeout (§9).
@@ -23,6 +27,7 @@ import { randomUUID } from 'node:crypto';
 import { arch, platform, release } from 'node:os';
 
 import { loadTelemetryConfig } from './config.js';
+import { httpJson } from './core/net.js';
 import { loadIdentity } from './identity.js';
 import { run } from './scheme/exec.js';
 
@@ -98,19 +103,41 @@ async function buildDevice(deviceId) {
 
 /**
  * POST one batch. Never throws — telemetry must not affect the app.
+ *
+ * With a `reporter` the call goes through the instrumented HTTP path, so the request and the
+ * response show up in the desktop UI's traffic pane and in the CLI log like every other call —
+ * an integrator should be able to read the exact batch this app sent, not take it on trust.
+ * Without one (the resident service, which has no run to report into) it is a plain fetch.
+ *
  * @returns {Promise<{ ok: boolean, status?: number, body?: string, error?: string, skipped?: string }>}
  */
-export async function sendTelemetryBatch({ url, apiKey, app, device, scanner, events }) {
+export async function sendTelemetryBatch({ url, apiKey, app, device, scanner, events, reporter }) {
   if (!url || !apiKey) return { ok: false, skipped: 'telemetry endpoint or api key not configured' };
 
   // `scanner` is sent only when the batch needs it: it is required by scanner.* / scan.*
   // events and pointless on the others, and the batch describes exactly one scanner (§5.3).
   const batch = { sentAt: isoWithOffset(), app, device, ...(scanner ? { scanner } : {}), events };
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'x-api-key': apiKey };
+
+  if (reporter) {
+    try {
+      const { res, text } = await httpJson(reporter, {
+        label: `telemetry ${events[0]?.eventName ?? 'batch'}`,
+        method: 'POST',
+        url,
+        headers,
+        body: batch,
+      });
+      return { ok: res.ok, status: res.status, body: text };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }
 
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=utf-8', 'x-api-key': apiKey },
+      headers,
       body: JSON.stringify(batch),
       signal: AbortSignal.timeout(TELEMETRY_TIMEOUT_MS),
     });
@@ -180,8 +207,8 @@ export function exampleSerialNumber(deviceId) {
 }
 
 /**
- * Report `scanner.connected` — the scanner is on the desk and ready for the case that just
- * arrived. See SprintRay-Telemetry-API_CN.md §6.2.
+ * Report `scanner.connected` — the scanner is on the desk, ready for the case that just
+ * arrived, and the doctor behind that case is known. See SprintRay-Telemetry-API_CN.md §6.2.
  *
  * @param {object} opts
  * @param {string} opts.url            telemetry endpoint
@@ -192,8 +219,11 @@ export function exampleSerialNumber(deviceId) {
  * @param {string} opts.deviceId
  * @param {string} [opts.build]        CI build number or short sha
  * @param {string} [opts.channel]      release | beta | internal | dev
- * @param {string} [opts.sessionId]    groups this run's events; defaults to this process's
+ * @param {string} [opts.userId]       the doctor's SprintRay id, verbatim; omitted when unknown
+ * @param {{ eventId: string, occurredAt: string, sessionId: string }} [opts.event]
+ *   the event minted when the launch arrived; a fresh one is stamped when it is absent
  * @param {{ serialNumber?: string, model?: string, firmwareVersion?: string, connection?: string }} [opts.scanner]
+ * @param {object} [opts.reporter]     instrument the POST into the run's traffic log
  */
 export async function reportScannerConnected({
   url,
@@ -204,8 +234,10 @@ export async function reportScannerConnected({
   deviceId,
   build,
   channel,
-  sessionId = SESSION_ID,
+  userId,
+  event = newScannerConnectedEvent(),
   scanner = {},
+  reporter,
 }) {
   if (!telemetryPlatform()) {
     return { ok: false, skipped: `os.platform enum has no value for ${platform()}` };
@@ -214,19 +246,10 @@ export async function reportScannerConnected({
   const firmwareVersion = scanner.firmwareVersion || DEFAULT_SCANNER_FIRMWARE_VERSION;
   const connection = scanner.connection || DEFAULT_SCANNER_CONNECTION;
 
-  const event = {
-    eventId: randomUUID(),
-    eventName: SCANNER_CONNECTED_EVENT,
-    occurredAt: isoWithOffset(),
-    sessionId,
-    // The link speed the scanner actually negotiated and the firmware it is running — the two
-    // things that explain "it feels slow" and "this firmware fails more often" later on.
-    eventData: { connection, firmwareVersion },
-  };
-
   return sendTelemetryBatch({
     url,
     apiKey,
+    reporter,
     app: buildApp({ appVersion, installPath, installationId, build, channel }),
     device: await buildDevice(deviceId),
     scanner: {
@@ -235,41 +258,83 @@ export async function reportScannerConnected({
       firmwareVersion,
       connection,
     },
-    events: [event],
+    events: [
+      {
+        ...event,
+        // Omitted rather than sent empty when there is no signed-in doctor: an id that is not
+        // real is worse than a missing one, since it silently attributes the event (§5.4).
+        ...(userId ? { userId } : {}),
+        // The link speed the scanner actually negotiated and the firmware it is running — the
+        // two things that explain "it feels slow" and "this firmware fails more often" later.
+        eventData: { connection, firmwareVersion },
+      },
+    ],
   });
 }
 
 /**
- * Report `scanner.connected` for one launch: resolve the config and this install's identity,
- * send, and say what happened. Every launch path calls this — the OS URL scheme, the local
- * service's /start, and the CLI handling a launch URL — so one launch is one event, whichever
- * transport carried it.
+ * Stamp the `scanner.connected` event for one launch — identity and time only, no send.
  *
- * Never throws and never blocks the launch: telemetry that can hold up the scanner app is
- * worse than telemetry that is missing.
+ * The two halves are deliberately separate. The launch is when the scanner connected, so that
+ * is the `occurredAt` this app has to keep; but the event's `userId` does not exist yet, since
+ * the doctor is only known once the launch's one-time code has been exchanged for a token. So
+ * the launch stamps the event and the exchange sends it — the spec's rule (§5.4) is that the
+ * id is captured for the event it belongs to, not filled in from whoever is signed in later,
+ * and here that is one and the same launch.
+ */
+export function newScannerConnectedEvent() {
+  return {
+    eventId: randomUUID(),
+    eventName: SCANNER_CONNECTED_EVENT,
+    occurredAt: isoWithOffset(),
+    sessionId: SESSION_ID,
+  };
+}
+
+/**
+ * The launch half: stamp the event now and hand back the one call that sends it. Every launch
+ * path builds one of these — the OS URL scheme, the local service's /start, and the CLI
+ * handling a launch URL — and the flow sends it as soon as the token exchange names the doctor.
+ *
+ * `send()` never throws and answers at most once: one launch is one event, even if the tester
+ * runs the same launch payload twice.
  *
  * @param {object} opts
  * @param {Record<string, string|undefined>} [opts.env]
  * @param {{ appVersion?: string, installPath?: string, stateDir?: string }} [opts.defaults]
  * @param {(msg: string) => void} [opts.log]
+ * @returns {{ event: object, sent: boolean, send: (opts: { userId?: string, reporter?: object }) => Promise<object> }}
  */
-export async function reportScannerConnectedOnLaunch({ env, defaults = {}, log = () => {} } = {}) {
-  try {
-    const config = loadTelemetryConfig(env, defaults);
-    const identity = await loadIdentity(config.stateDir);
-    const result = await reportScannerConnected({
-      ...config,
-      installationId: identity.installationId,
-      deviceId: identity.deviceId,
-    });
+export function createLaunchTelemetry({ env, defaults = {}, log = () => {} } = {}) {
+  const event = newScannerConnectedEvent();
+  const launch = { event, sent: false };
 
-    if (result.skipped) log(`${SCANNER_CONNECTED_EVENT} skipped — ${result.skipped}`);
-    else if (result.ok) log(`reported ${SCANNER_CONNECTED_EVENT} (HTTP ${result.status})`);
-    else log(`${SCANNER_CONNECTED_EVENT} failed — ${result.error ?? `HTTP ${result.status}`}`);
+  launch.send = async ({ userId, reporter } = {}) => {
+    if (launch.sent) return { ok: false, skipped: 'already sent for this launch' };
+    launch.sent = true;
 
-    return result;
-  } catch (err) {
-    log(`${SCANNER_CONNECTED_EVENT} failed — ${err.message}`);
-    return { ok: false, error: err.message };
-  }
+    try {
+      const config = loadTelemetryConfig(env, defaults);
+      const identity = await loadIdentity(config.stateDir);
+      const result = await reportScannerConnected({
+        ...config,
+        installationId: identity.installationId,
+        deviceId: identity.deviceId,
+        userId,
+        event,
+        reporter,
+      });
+
+      if (result.skipped) log(`${SCANNER_CONNECTED_EVENT} skipped — ${result.skipped}`);
+      else if (result.ok) log(`reported ${SCANNER_CONNECTED_EVENT} (HTTP ${result.status})`);
+      else log(`${SCANNER_CONNECTED_EVENT} failed — ${result.error ?? `HTTP ${result.status}`}`);
+
+      return result;
+    } catch (err) {
+      log(`${SCANNER_CONNECTED_EVENT} failed — ${err.message}`);
+      return { ok: false, error: err.message };
+    }
+  };
+
+  return launch;
 }

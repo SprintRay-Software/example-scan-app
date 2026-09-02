@@ -17,7 +17,7 @@ import { fail, info, ok, step } from './log.js';
 import { runFlow } from './core/flow.js';
 import { createConsoleReporter } from './core/console-reporter.js';
 import { startScanProLocalServer, summarizeArgument } from './local-server/index.js';
-import { reportScannerConnectedOnLaunch } from './telemetry.js';
+import { createLaunchTelemetry } from './telemetry.js';
 import { schemeStatus } from './scheme/index.js';
 import { openWithOsHandler, waitForApplication } from './scheme/open.js';
 
@@ -190,9 +190,9 @@ export async function runServeCommand(argv, env = process.env) {
       state.running = true;
 
       // Without --run-flow the launch is handed to the OS handler above, and whatever starts up
-      // reports its own scanner.connected. Here the payload is handled in-process, so this is
-      // the launch and this is where the event comes from.
-      reportScannerConnectedOnLaunch({
+      // stamps and sends its own scanner.connected. Here the payload is handled in-process, so
+      // this is the launch: stamp it now, and the flow sends it after the token exchange.
+      const launchTelemetry = createLaunchTelemetry({
         env,
         defaults: { appVersion: options.reportedVersion, installPath: SIM_DIR },
         log: info,
@@ -205,6 +205,7 @@ export async function runServeCommand(argv, env = process.env) {
           config: flowConfig,
           input: { launchUrl: argument },
           fixturesDir: FIXTURES_DIR,
+          launchTelemetry,
         });
         if (summary.ok) return { started: true };
         return {

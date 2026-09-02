@@ -16,7 +16,7 @@ import {
   archName,
   archForFileType,
 } from '../payload.js';
-import { exchangeCodeForTokens, refreshTokens } from '../auth.js';
+import { exchangeCodeForTokens, refreshTokens, subjectFromAccessToken } from '../auth.js';
 import { uploadFixture } from '../upload.js';
 import { completeScanJob } from '../complete.js';
 import { uploadScanArtifacts } from '../artifacts.js';
@@ -97,7 +97,7 @@ function buildUpload(treatmentFileType, fileTypeSource, input, fixturesDir, voca
  * @returns {Promise<{ ok: boolean, results: object[], failures: object[],
  *                     completed: object|null, report: object|null, meshes: object[] }>}
  */
-export async function runFlow(reporter, { config, input, fixturesDir }) {
+export async function runFlow(reporter, { config, input, fixturesDir, launchTelemetry }) {
   let baseUrl = config.baseUrl;
   let tokenPath = DEFAULT_TOKEN_PATH;
   let code;
@@ -164,6 +164,28 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     clientId: config.clientId,
     clientSecret: config.clientSecret,
   });
+
+  // 1b) The launch's scanner.connected has been waiting for exactly this: the doctor's id. It
+  // was stamped when the launch arrived (that is when the scanner connected), and only now can
+  // it name who the case belongs to — the payload carries a one-time code, not an identity.
+  // Telemetry never decides whether a scan happens, so a failure here is logged and stepped
+  // over; and it goes through the reporter, so the full batch is visible in the traffic log.
+  if (launchTelemetry && !launchTelemetry.sent) {
+    const userId = subjectFromAccessToken(tokens.access_token);
+    reporter.phase('telemetry', 'active', 'Reporting scanner.connected');
+    reporter.step(`Reporting scanner.connected${userId ? ` for ${userId}` : ' (no userId on the token)'}`);
+    const result = await launchTelemetry.send({ userId, reporter });
+    if (result.ok) {
+      reporter.ok(`scanner.connected accepted (HTTP ${result.status})`);
+      reporter.phase('telemetry', 'done', userId ? `userId=${userId}` : 'no userId');
+    } else if (result.skipped) {
+      reporter.info(`scanner.connected not sent — ${result.skipped}`);
+      reporter.phase('telemetry', 'skipped', result.skipped);
+    } else {
+      reporter.fail(`scanner.connected failed — ${result.error ?? `HTTP ${result.status}`}`);
+      reporter.phase('telemetry', 'error', result.error ?? `HTTP ${result.status}`);
+    }
+  }
 
   // Optional: exercise the refresh endpoint.
   if (input.demoRefresh) {

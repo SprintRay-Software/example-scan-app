@@ -381,6 +381,7 @@
           <ol id="pipeline" class="pipeline">
             <li class="pl-node" data-stage="decode"><span class="pl-dot"></span><span class="pl-name">Decode payload</span><span class="pl-status">pending</span><span class="pl-detail"></span></li>
             <li class="pl-node" data-stage="exchange"><span class="pl-dot"></span><span class="pl-name">Exchange code for tokens</span><span class="pl-status">pending</span><span class="pl-detail"></span></li>
+            <li class="pl-node pl-optional" data-optional="1" data-stage="telemetry"><span class="pl-dot"></span><span class="pl-name">Report scanner.connected</span><span class="pl-status">skipped</span><span class="pl-detail"></span></li>
             <li class="pl-node pl-optional" data-optional="1" data-stage="refresh"><span class="pl-dot"></span><span class="pl-name">Refresh tokens (optional)</span><span class="pl-status">skipped</span><span class="pl-detail"></span></li>
             <li class="pl-node" data-stage="link"><span class="pl-dot"></span><span class="pl-name">Get presigned upload URL</span><span class="pl-status">pending</span><span class="pl-detail"></span></li>
             <li class="pl-node" data-stage="put"><span class="pl-dot"></span><span class="pl-name">PUT scan bytes to S3</span><span class="pl-status">pending</span><span class="pl-detail"></span></li>
