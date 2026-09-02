@@ -8,8 +8,9 @@
 //
 // On startup it additionally brings up the ScanPro local HTTP service on 127.0.0.1
 // (src/local-server) — the second way the web app can reach a desktop scanner. Both
-// transports carry the same base64 launch payload and land in the same UI, and both report
-// the `scanner.connected` telemetry event (src/telemetry.js) as the launch comes in.
+// transports carry the same base64 launch payload and land in the same UI, and both stamp the
+// `scanner.connected` telemetry event (src/telemetry.js) as the launch comes in — the run sends
+// it once the token exchange names the doctor.
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +21,7 @@ import { normalizeBaseUrl, loadLocalServerConfig } from '../src/config.js';
 import { runFlow, decodeLaunch } from '../src/core/flow.js';
 import { createReporter } from '../src/core/reporter.js';
 import { startScanProLocalServer, summarizeArgument } from '../src/local-server/index.js';
-import { reportScannerConnectedOnLaunch } from '../src/telemetry.js';
+import { createLaunchTelemetry } from '../src/telemetry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SIM_DIR = resolve(__dirname, '..');
@@ -134,6 +135,10 @@ let rendererReady = false;
 // A launch may arrive before the renderer is ready; hold the latest one.
 // Shape: { url, source, resolve } — source is 'os' (URL scheme) or 'local-server' (/start).
 let pendingLaunch = null;
+// The scanner.connected event stamped for the latest launch, waiting for the run that will send
+// it. Shape: { url, telemetry }. Held against its launch URL so that running a *pasted* payload
+// in the developer skin — which is not a launch — does not claim the real launch's event.
+let pendingLaunchTelemetry = null;
 
 function createWindow() {
   rendererReady = false;
@@ -221,17 +226,22 @@ function deliverLaunch(url, source = 'os') {
   if (!url) return Promise.resolve(false);
 
   // Every launch — either transport, window already open or not — is a scanner arriving at a
-  // case, so it is reported once, here. Deliberately not awaited: /start blocks on the value
-  // this function returns, and a slow telemetry endpoint must not become a slow launch.
-  reportScannerConnectedOnLaunch({
-    env: { ...process.env, ...ENV },
-    defaults: {
-      appVersion: app.getVersion(),
-      installPath: app.isPackaged ? dirname(app.getPath('exe')) : SIM_DIR,
-      stateDir: app.getPath('userData'),
-    },
-    log: (msg) => console.log(`[telemetry] ${msg} (launch via ${source})`),
-  });
+  // case, so each one stamps its own scanner.connected here, at the moment it arrived. Nothing
+  // is sent yet: the event needs the doctor's id, which exists only once the run has exchanged
+  // this launch's code, so the send rides along with the flow (see runFlow).
+  pendingLaunchTelemetry = {
+    url,
+    telemetry: createLaunchTelemetry({
+      env: { ...process.env, ...ENV },
+      defaults: {
+        appVersion: app.getVersion(),
+        installPath: app.isPackaged ? dirname(app.getPath('exe')) : SIM_DIR,
+        stateDir: app.getPath('userData'),
+      },
+      log: (msg) => console.log(`[telemetry] ${msg} (launch via ${source})`),
+    }),
+  };
+  console.log(`[telemetry] scanner.connected stamped for the launch via ${source}`);
 
   if (mainWindow && rendererReady) {
     mainWindow.webContents.send('launch', { url, source });
@@ -522,8 +532,13 @@ ipcMain.handle('flow:run', async (event, params) => {
     result: (p) => send('result', p),
   });
 
+  // This run carries the launch's telemetry only when it is running that same launch payload.
+  const launchUrl = String(input?.launchUrl ?? '').trim();
+  const launchTelemetry =
+    launchUrl && pendingLaunchTelemetry?.url?.trim() === launchUrl ? pendingLaunchTelemetry.telemetry : null;
+
   try {
-    const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR });
+    const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR, launchTelemetry });
     return { ok: true, summary };
   } catch (err) {
     send('fail', { msg: err.message });

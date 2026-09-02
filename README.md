@@ -686,8 +686,8 @@ a time — so it ends exactly the way a real session does. Those meshes are sess
 PUT, and they never appear in the doctor's Cloud Drive. Form B (`--code`, no launch URL) has no
 `case.ID`, so there is no session to finish and both steps report as skipped.
 
-Every launch also reports one telemetry event, `scanner.connected`, before any of this — see
-[Telemetry](#telemetry).
+The run also reports one telemetry event, `scanner.connected`, right after the exchange — that is
+the first moment the doctor behind the launch is known. See [Telemetry](#telemetry).
 
 **Every backend request and response is logged in full** (method, URL, headers, body / status,
 headers, body) so you can see exactly what to send and what to expect. Swap the files in `fixtures/`
@@ -848,8 +848,9 @@ service reports it:
 | `eventData` | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
 
 This one carries no `scanner` object — the failure has nothing to do with the scanner, and a batch
-sends `scanner` only for the events that require it. Everything else about how it is sent is in
-[Telemetry](#telemetry) below.
+sends `scanner` only for the events that require it — and no `userId`: the service starts before
+anyone has signed in, and the spec would rather have the field absent than filled with a
+placeholder. Everything else about how it is sent is in [Telemetry](#telemetry) below.
 
 ### Where this goes beyond the written contract
 
@@ -868,12 +869,11 @@ you find out here that the payload is malformed, instead of watching a scanner s
 
 ## Telemetry
 
-Two events go to SprintRay's telemetry endpoint, both from moments where **no doctor is signed in
-yet** — so neither carries a `userId`, and neither waits for a token:
+Two events go to SprintRay's telemetry endpoint:
 
 | `eventName` | When | `eventData` |
 |---|---|---|
-| `scanner.connected` | every time the app is launched with a case | `{ connection, firmwareVersion }` |
+| `scanner.connected` | every time the app is launched with a case — stamped at the launch, sent once the code has been exchanged | `{ connection, firmwareVersion }` |
 | `local_server.port_unavailable` | the whole port range is taken, so the local service never starts (see [above](#when-every-port-is-taken)) | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
 
 ```sh
@@ -893,8 +893,25 @@ the OS URL scheme, the local service's `POST /scanpro/v1/start`, and the CLI han
 (Form A). A resident app handed a second case reports a second event under the same `sessionId` —
 that id identifies one run of the app, not one case.
 
-The send never blocks the launch: it is fired and left to finish on its own, so a slow or
-unreachable telemetry endpoint costs the doctor nothing. The window comes forward either way.
+**Stamped at the launch, sent after the token exchange.** The two halves are deliberately apart:
+
+- `occurredAt` and `eventId` are fixed when the launch arrives, because that is when the scanner
+  connected — not when the batch happened to go out;
+- `userId` only exists after the exchange. The launch payload carries a **one-time code, not an
+  identity**, and that code cannot be spent twice — so the app cannot look the doctor up on its
+  own, and the id comes from the `sub` claim of the access token the run already fetched. It is
+  reported **verbatim** (`auth0|…`, no lowercasing, no trimming); an id that was reshaped joins to
+  nothing on SprintRay's side.
+
+The consequence worth knowing: a launch whose code is never exchanged — the developer skin sitting
+on a decoded payload nobody ran, or an exchange that fails — sends nothing. That is the intended
+trade: the spec (§5.4) would rather have no event than one attributed to nobody, and every launch
+that actually scans does exchange first.
+
+The send never fails the run and never blocks the launch — a bad telemetry endpoint costs the
+doctor nothing, and the pipeline steps over it. In the developer skin it is a step of its own in
+the pipeline, and the **whole batch and the endpoint's answer are in the traffic log** like every
+other call, so you can read exactly what this app sent rather than take it on trust.
 
 `scanner.*` events require the batch to name the scanner (a batch without it is rejected with
 `SCANNER_REQUIRED`), and this example has no hardware to ask, so it reports what the `.env` says:

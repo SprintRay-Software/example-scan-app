@@ -631,7 +631,8 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 Cloud Drive 里。形式 B(`--code`,无启动 URL)没有 `case.ID`,也就没有会话可结束,这两步都会标记为
 skipped。
 
-在这一切之前,每次被拉起还会上报一条遥测事件 `scanner.connected`,见[遥测](#遥测)。
+换取 token 之后还会上报一条遥测事件 `scanner.connected` —— 那是本次拉起第一次知道医生是谁的时刻,
+见[遥测](#遥测)。
 
 **每个后端请求与响应都会被完整打印**(方法、URL、请求头、请求体 / 状态码、响应头、响应体),
 让你清楚地看到该发送什么、该期望什么。把 `fixtures/` 里的文件替换成你自己的扫描件即可测试其它数据 ——
@@ -777,8 +778,8 @@ curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
 | `severity` | `error` |
 | `eventData` | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
 
-这一条不带 `scanner` —— 该故障与口扫设备无关,而批次只在需要的事件上带 `scanner`。其余发送规则见
-下面的[遥测](#遥测)。
+这一条不带 `scanner` —— 该故障与口扫设备无关,而批次只在需要的事件上带 `scanner`;也不带 `userId` ——
+该服务在任何人登录之前就已启动,规范宁可这个字段缺失,也不要一个占位值。其余发送规则见下面的[遥测](#遥测)。
 
 ### 相对文档契约的增补
 
@@ -796,12 +797,11 @@ curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
 
 ## 遥测
 
-有两个事件会发往 SprintRay 的遥测接口,它们都发生在**还没有医生登录**的时刻 —— 所以都不带 `userId`,
-也都不等待 token:
+有两个事件会发往 SprintRay 的遥测接口:
 
 | `eventName` | 何时上报 | `eventData` |
 |---|---|---|
-| `scanner.connected` | 每次应用被带着病例拉起时 | `{ connection, firmwareVersion }` |
+| `scanner.connected` | 每次应用被带着病例拉起时 —— 拉起那一刻打时间戳,换取 token 之后发送 | `{ connection, firmwareVersion }` |
 | `local_server.port_unavailable` | 端口区间被占满,本机服务未能启动(见[上文](#端口区间被占满时)) | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
 
 ```sh
@@ -818,7 +818,20 @@ SCANPRO_TELEMETRY_CHANNEL=dev          # release | beta | internal | dev
 无论走哪条路径:系统 URL scheme、本机服务的 `POST /scanpro/v1/start`,以及 CLI 处理启动 URL(形式 A)。
 常驻的应用再接到一个病例就再报一条,`sessionId` 不变 —— 该 id 标识的是应用的一次运行,不是一个病例。
 
-发送不会阻塞拉起:调用发出后就不再等待,所以遥测接口慢或不可达都不会让医生多等,窗口照常弹到前台。
+**拉起那一刻打时间戳,换取 token 之后发送。** 两半刻意分开:
+
+- `occurredAt` 与 `eventId` 在拉起时就定下来,因为那才是口扫设备连上的时刻,而不是批次碰巧发出的时刻;
+- `userId` 要等到换取 token 之后才存在。启动 payload 里带的是**一次性 code,不是身份**,而且这个 code
+  不能用第二次 —— 所以应用没法自己去查医生是谁,这个 id 只能取自本次流程已经换回来的 access token 的
+  `sub` claim。**原样上报**(`auth0|…`,不转小写、不截断):变形过的 id 在 SprintRay 侧关联不到任何人。
+
+有一点需要知道:如果一次拉起的 code 始终没有被换取 —— 开发者皮肤里解码完了却没人点运行,或者换取失败 ——
+就不会发送任何事件。这是刻意的取舍:规范(§5.4)宁可没有这条事件,也不要一条归属不到人的事件;而真正会去
+扫描的拉起,一定会先换 token。
+
+发送既不会让流程失败,也不会阻塞拉起 —— 遥测接口出问题不会让医生多等,流程直接跨过去。在开发者皮肤里它是
+流水线上单独的一步,**整个批次和接口的响应都会出现在请求日志里**,和其它调用一样,你可以直接读到这个应用
+究竟发了什么,而不必凭信任。
 
 `scanner.*` 事件要求批次里必须有口扫设备信息(缺失会被拒收,错误码 `SCANNER_REQUIRED`),而本示例没有
 真实硬件可问,于是取 `.env` 里配置的值:

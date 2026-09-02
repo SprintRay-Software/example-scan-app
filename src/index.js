@@ -26,7 +26,7 @@ import { loadConfig, packageVersion } from './config.js';
 import { parseTeethList } from './scan-report.js';
 import { fail, info } from './log.js';
 import { runFlow } from './core/flow.js';
-import { reportScannerConnectedOnLaunch } from './telemetry.js';
+import { createLaunchTelemetry } from './telemetry.js';
 import { createConsoleReporter } from './core/console-reporter.js';
 import { SCHEME_COMMANDS, runSchemeCommand } from './scheme-cli.js';
 import { SERVE_COMMANDS, SERVE_USAGE, runServeCommand } from './serve-cli.js';
@@ -255,19 +255,18 @@ async function main() {
         ...run,
       };
 
-  // Form A is a launch: the browser handed this app a case, so the scanner is at the chair.
-  // Form B is a developer running the flow by hand — no launch, no event. Started before the
-  // flow so it overlaps with it, awaited before exiting so the POST is not cut off.
-  const launchReported = hasFormA
-    ? reportScannerConnectedOnLaunch({
+  // Form A is a launch: the browser handed this app a case, so the scanner is at the chair, and
+  // scanner.connected is stamped here — at the launch. The flow sends it once the exchange
+  // names the doctor. Form B is a developer running the flow by hand: no launch, no event.
+  const launchTelemetry = hasFormA
+    ? createLaunchTelemetry({
         env: process.env,
         defaults: { appVersion: packageVersion(), installPath: SIM_DIR },
         log: info,
       })
     : null;
 
-  const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR });
-  await launchReported;
+  const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR, launchTelemetry });
   process.exit(summary.ok ? 0 : 1);
 }
 

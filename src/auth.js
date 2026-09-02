@@ -2,6 +2,8 @@
 // Every call is fully reported (request + response) via the injected reporter, so the
 // same instrumented flow drives both the CLI console and the Electron UI.
 
+import { Buffer } from 'node:buffer';
+
 import { httpJson, joinUrl } from './core/net.js';
 
 // Map an error status + body to a clear, actionable message.
@@ -34,6 +36,34 @@ function assertTokens(tokens, context) {
     throw new Error(`${context}: response did not include an access_token`);
   }
   return tokens;
+}
+
+/**
+ * The signed-in doctor's SprintRay user id, read off the access token's `sub` claim.
+ *
+ * This is the only place the desktop app learns who the launch belongs to: the launch payload
+ * carries a one-time code, not an identity, and the code cannot be exchanged twice. So anything
+ * that needs the user id — telemetry, a status line — reads it from the token this exchange
+ * already returned, and reports it **verbatim** (no lowercasing, no trimming): an id that was
+ * reshaped joins to nothing on SprintRay's side (see SprintRay-Telemetry-API_CN.md §5.4).
+ *
+ * The token is not verified here; the app is not the audience and has no business trusting it
+ * for anything but this. Anything unexpected returns null rather than throwing — no telemetry
+ * detail is worth failing a scan over.
+ *
+ * @param {string} accessToken
+ * @returns {string|null}
+ */
+export function subjectFromAccessToken(accessToken) {
+  try {
+    const claims = String(accessToken).split('.');
+    if (claims.length < 2) return null;
+    const payload = JSON.parse(Buffer.from(claims[1], 'base64url').toString('utf8'));
+    const sub = payload?.sub;
+    return typeof sub === 'string' && sub.trim() !== '' ? sub : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

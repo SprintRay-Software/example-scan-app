@@ -11,7 +11,7 @@
 // cares about; missing ones are filled with no-ops so callers never have to guard.
 const METHODS = [
   // pipeline stage lifecycle — (stage, status, detail?)
-  // stage:  'decode' | 'exchange' | 'refresh' | 'link' | 'put' | 'complete' | 'meshes'
+  // stage:  'decode' | 'exchange' | 'telemetry' | 'refresh' | 'link' | 'put' | 'complete' | 'meshes'
   // status: 'active' | 'done' | 'error' | 'skipped'
   'phase',
   // narrated log lines (mirror the CLI's step/ok/fail/info)
