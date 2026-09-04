@@ -229,7 +229,7 @@ Content-Type: application/json
   "hasLower": true,
   "missingTeeth": [1, 16],
   "segmentedTeeth": [
-    { "toothNumber": 8, "filename": "tooth_8.ply", "confidence": 0.97 }
+    { "toothNumber": 8, "filename": "tooth_8.ply", "confidence": 0.97, "condition": "prepared" }
   ]
 }
 ```
@@ -261,7 +261,19 @@ Content-Type: application/json
 - `hasUpper` / `hasLower`:本次会话是否扫了对应那一颌。牙龈链接由它们决定 —— 没有 `hasLower`,
   就没有 `gingivaUploadLink.lower`。
 - `segmentedTeeth[]` 声明的是你**接下来要上传**的逐牙网格:牙位号 `toothNumber`、你将使用的文件名
-  `filename`、以及分割置信度 `confidence`。每颗牙返回一条链接,放在 `segmentedTeethUploadLinks` 里。
+  `filename`、分割置信度 `confidence`,以及该牙的状态 `condition`。每颗牙返回一条链接,放在
+  `segmentedTeethUploadLinks` 里。
+- `segmentedTeeth[].condition` 描述这颗牙**是什么状态**。与 `scanMode` 不同,它用的是 SprintRay 的
+  词汇而不是你的,取值只有这三个:
+
+  | `condition` | 含义 |
+  |---|---|
+  | `prepared` | 已备牙 —— 完成预备、有边缘线,待做修复体 |
+  | `missing` | 该牙位缺失,网格覆盖的是牙位本身 |
+  | `restored` | 已有修复体 —— 牙冠、嵌体、充填 |
+
+  该字段**可选、可为 null**:你的扫描仪没有判断的牙位,不传这个键或传 `null` 均可。不传不等于
+  `missing` —— 只有扫描仪确实判定这颗牙缺失时才报 `missing`。
 - **幂等,元数据也一样。** 重试会重新签发指向**同一批**对象的链接,已经 PUT 上去的网格不会丢;
   上报的元数据是覆盖写,所以用同样的请求体重试会收敛到同一结果。对已经结束的会话上报元数据同样有效 ——
   提交 treatment 会在 SprintRay 侧把会话结束掉,这一步有可能先于你的调用发生。
@@ -285,9 +297,14 @@ Content-Length: <fileSize>
 - PUT 之后**不需要再调任何接口** —— 没有 confirm,也不用再调一次结束接口。这些网格属于会话元数据,
   不是 treatment 文件:它们不会挂到 treatment 上,也不会出现在医生的 Cloud Drive 里。
 
-错误:`400` 完全没传 id、牙位号超出 1-32、同一个 `toothNumber` 出现两次,或 `filename` 的扩展名不被允许 ·
-`401` access token 缺失或过期 · `403` 缺少或无效的 `x-api-key` · `404` 会话不存在,**或**属于其他医生
-(两者故意不作区分)。
+错误:`400` 完全没传 id、牙位号超出 1-32、同一个 `toothNumber` 出现两次、`filename` 的扩展名不被允许,
+或 `condition` 的取值不在枚举内 · `401` access token 缺失或过期 · `403` 缺少或无效的 `x-api-key` ·
+`404` 会话不存在,**或**属于其他医生(两者故意不作区分)。
+
+最后那个 `400` 值得单独留意,因为它和你发送的其它名字**行为不同**:`scanMode` 与
+`externalScanFileType` 是自由词表 —— SprintRay 没见过的名字会被登记在你的集成名下,调用照样成功;
+`condition` 是封闭枚举,拼错会让**整个**结束调用失败,既不会被登记,也不会被悄悄忽略。不传这个键
+或传 `null` 一律合法 —— 报错针对的是"传了、但值不对"。
 
 ### 4. 读取扫描会话（可选）
 
@@ -607,6 +624,7 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 | `--scan-mode <name>` | 上报的 `scanMode`(默认取 `$SCANPRO_SCAN_MODE`,否则 `quickScan`) |
 | `--missing-teeth 1,16` | 上报的 `missingTeeth`,通用牙位编号(默认:没有缺失牙) |
 | `--segmented-teeth 8,9` | 上报并上传的牙位 —— 传 `none` 表示一颗都不报(默认:所报颌位中除缺失牙以外的全部牙位) |
+| `--tooth-condition 8=prepared,9=restored` | 逐牙上报的 `condition` —— `prepared` / `missing` / `restored`(默认:每颗牙都是 `null`) |
 | `--no-metadata` | 什么都不报:结束调用只带 id,与这套契约之前写好的客户端行为一致 |
 | `--upper-scan-type <n>` / `--lower-scan-type <n>` | 各颌上传时发送的 `externalScanFileType`(默认取 `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER`,否则 `UpperArch` / `LowerArch`) |
 | `--tooth-file <p>` / `--gingiva-file <p>` | PUT 到每个返回链接的网格文件(默认 `fixtures/tooth.ply` / `fixtures/gingiva.ply`) |
@@ -623,8 +641,9 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 上传是并发的,但日志不会交错:每个文件先写进自己的缓冲区,再按文件顺序整段打印出来,所以字节在
 网络上重叠的同时,请求 / 响应日志读起来仍然是一个文件接一个文件。
 
-最后一个文件上传完成后会发起扫描结束调用,并上报本次会话扫到了什么:扫描模式、哪几颌、分割出的牙齿、
-缺失的牙齿。SprintRay 会按每颗分割牙一条、每个已扫颌位的牙龈一条返回预签名链接,本应用分批并发 PUT 上去 ——
+最后一个文件上传完成后会发起扫描结束调用,并上报本次会话扫到了什么:扫描模式、哪几颌、分割出的牙齿
+(每颗都带 `condition`,未用 `--tooth-condition` 指定时为 `null`)、缺失的牙齿。SprintRay 会按每颗
+分割牙一条、每个已扫颌位的牙龈一条返回预签名链接,本应用分批并发 PUT 上去 ——
 整个流程与真实会话完全一致。这些网格属于会话元数据:PUT 之后没有任何后续调用,也不会出现在医生的
 Cloud Drive 里。形式 B(`--code`,无启动 URL)没有 `case.ID`,也就没有会话可结束,这两步都会标记为
 skipped。

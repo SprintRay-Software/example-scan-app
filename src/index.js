@@ -14,7 +14,8 @@
 // runs the local HTTP service the web app probes on 127.0.0.1 (the other launch transport).
 //
 // Optional (A/B): --demo-refresh  (also exercises the token refresh endpoint), plus the
-//   scan-report flags below (--scan-mode / --missing-teeth / --segmented-teeth / --no-metadata).
+//   scan-report flags below (--scan-mode / --missing-teeth / --segmented-teeth /
+//   --tooth-condition / --no-metadata).
 //
 // Env (via `node --env-file=.env`): SCANPRO_BASE_URL, SCANPRO_API_KEY, SCANPRO_CLIENT_ID,
 //   SCANPRO_CLIENT_SECRET, and optional SCANPRO_URL_SCHEME (default scheme for `register`).
@@ -23,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { loadConfig, packageVersion } from './config.js';
-import { parseTeethList } from './scan-report.js';
+import { parseTeethList, parseToothConditions } from './scan-report.js';
 import { fail, info } from './log.js';
 import { runFlow } from './core/flow.js';
 import { createLaunchTelemetry } from './telemetry.js';
@@ -73,6 +74,9 @@ Options:
     --missing-teeth <list> universal tooth numbers not there, e.g. 1,16 (default none)
     --segmented-teeth <l>  universal tooth numbers you segmented, or "none"
                            (default: every tooth of the captured arches that is not missing)
+    --tooth-condition <l>  what a segmented tooth is, as <tooth>=<condition> pairs, e.g.
+                           8=prepared,9=restored (prepared | missing | restored;
+                           default: no condition on any tooth)
     --no-metadata          report nothing: finish the session the pre-metadata way
     --upper-scan-type <n>  externalScanFileType for the upper file (default UpperArch)
     --lower-scan-type <n>  externalScanFileType for the lower file (default LowerArch)
@@ -108,6 +112,7 @@ function parseArgs(argv) {
     scanMode: null,
     missingTeeth: null,
     segmentedTeeth: null,
+    toothConditions: null,
     noMetadata: false,
     upperScanType: null,
     lowerScanType: null,
@@ -156,6 +161,9 @@ function parseArgs(argv) {
           String(raw ?? '').trim().toLowerCase() === 'none' ? [] : parseTeethList(raw, '--segmented-teeth');
         break;
       }
+      case '--tooth-condition':
+        args.toothConditions = parseToothConditions(argv[++i], '--tooth-condition');
+        break;
       case '--no-metadata':
         args.noMetadata = true;
         break;
@@ -237,6 +245,7 @@ async function main() {
     scanMode: args.scanMode,
     missingTeeth: args.missingTeeth,
     segmentedTeeth: args.segmentedTeeth,
+    toothConditions: args.toothConditions,
     noMetadata: args.noMetadata,
     upperScanFileType: args.upperScanType,
     lowerScanFileType: args.lowerScanType,

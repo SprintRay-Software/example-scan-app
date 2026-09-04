@@ -90,7 +90,7 @@ function buildUpload(treatmentFileType, fileTypeSource, input, fixturesDir, voca
  *   Form B: { code, baseUrlOverride?, treatmentId? }
  *   both:   { demoRefresh?, upperFileOverride?, lowerFileOverride?,
  *             scanMode?, upperScanFileType?, lowerScanFileType?,
- *             missingTeeth?, segmentedTeeth?, noMetadata?,
+ *             missingTeeth?, segmentedTeeth?, toothConditions?, noMetadata?,
  *             toothFileOverride?, gingivaFileOverride?, concurrency? }
  * @param {string} opts.fixturesDir  where upper.stl / lower.stl and the tooth.ply / gingiva.ply
  *                                    meshes live
@@ -288,6 +288,7 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
         scanMode: vocabulary.scanMode,
         missingTeeth: input.missingTeeth ?? [],
         segmentedTeeth: input.segmentedTeeth ?? null,
+        toothConditions: input.toothConditions ?? null,
       });
       reporter.info(`Scan report: ${describeScanReport(report)}`);
     } else {

@@ -250,7 +250,7 @@ Content-Type: application/json
   "hasLower": true,
   "missingTeeth": [1, 16],
   "segmentedTeeth": [
-    { "toothNumber": 8, "filename": "tooth_8.ply", "confidence": 0.97 }
+    { "toothNumber": 8, "filename": "tooth_8.ply", "confidence": 0.97, "condition": "prepared" }
   ]
 }
 ```
@@ -285,8 +285,20 @@ Content-Type: application/json
 - `hasUpper` / `hasLower`: whether the session captured each arch. They gate the gingiva links —
   no `hasLower`, no `gingivaUploadLink.lower`.
 - `segmentedTeeth[]` declares the per-tooth meshes you are **about to** upload: the `toothNumber`,
-  the `filename` you will use, and the segmentation `confidence`. One link comes back per tooth, in
-  `segmentedTeethUploadLinks`.
+  the `filename` you will use, the segmentation `confidence`, and the tooth's `condition`. One link
+  comes back per tooth, in `segmentedTeethUploadLinks`.
+- `segmentedTeeth[].condition` is what the tooth **is** — unlike `scanMode` this is SprintRay's
+  vocabulary, not yours, and the only accepted values are:
+
+  | `condition` | Meaning |
+  |---|---|
+  | `prepared` | prepared for a restoration — reduced, with a margin |
+  | `missing` | the tooth is not there; the mesh covers the site |
+  | `restored` | already carries a restoration — crown, onlay, filling |
+
+  It is **optional and nullable**: omit the key, or send `null`, for a tooth your scanner does not
+  classify. Reporting nothing here is not the same as reporting `missing` — say `missing` only when
+  the scanner determined the tooth is absent.
 - **Idempotent, metadata included.** A retry re-issues links pointing at the **same** objects, so a
   mesh you already PUT stays where it is; the reported metadata is overwritten, so a same-payload
   retry converges. Reporting metadata on a session that is already finished works too — submitting
@@ -312,10 +324,16 @@ Content-Length: <fileSize>
   session metadata, not treatment files: they never attach to the treatment and never show up in the
   doctor's Cloud Drive.
 
-Errors: `400` no id at all, a tooth number outside 1-32, the same `toothNumber` twice, or a
-`filename` whose extension is not allowed · `401` expired/missing access token · `403` missing or
-invalid `x-api-key` · `404` no such session, **or** it belongs to another doctor (the two are
-deliberately indistinguishable).
+Errors: `400` no id at all, a tooth number outside 1-32, the same `toothNumber` twice, a
+`filename` whose extension is not allowed, or a `condition` outside the enum · `401`
+expired/missing access token · `403` missing or invalid `x-api-key` · `404` no such session,
+**or** it belongs to another doctor (the two are deliberately indistinguishable).
+
+That last `400` is the one to watch, because it does **not** behave like the other names you send.
+`scanMode` and `externalScanFileType` are free vocabularies — a name SprintRay has not seen is
+registered against your integration and the call succeeds. `condition` is closed, so a misspelling
+fails the **whole** finish call: it is neither registered nor quietly dropped. Omitting the key, or
+sending `null`, is always fine — the error is for a value that is present and wrong.
 
 ### 4. Read a scan session back (optional)
 
@@ -658,6 +676,7 @@ of it can be overridden:
 | `--scan-mode <name>` | the reported `scanMode` (default `$SCANPRO_SCAN_MODE`, else `quickScan`) |
 | `--missing-teeth 1,16` | reported `missingTeeth`, universal numbering (default: none) |
 | `--segmented-teeth 8,9` | the teeth reported and uploaded — `none` reports zero (default: every tooth of the captured arches that is not missing) |
+| `--tooth-condition 8=prepared,9=restored` | the `condition` reported per tooth — `prepared` / `missing` / `restored` (default: `null` on every tooth) |
 | `--no-metadata` | report nothing at all: the finish call sends the id alone, the way a client written before this contract does |
 | `--upper-scan-type <n>` / `--lower-scan-type <n>` | the `externalScanFileType` sent for each arch (default `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER`, else `UpperArch` / `LowerArch`) |
 | `--tooth-file <p>` / `--gingiva-file <p>` | the mesh PUT to each returned link (default `fixtures/tooth.ply` / `fixtures/gingiva.ply`) |
@@ -678,7 +697,8 @@ and is printed as one block, in file order, so the transaction log still reads o
 while the bytes overlap on the wire.
 
 After the last upload it makes the scan-finish call, reporting what the session captured: the scan
-mode, which arches, the segmented teeth and the missing ones. SprintRay answers with one presigned
+mode, which arches, the segmented teeth (each with its `condition`, `null` unless
+`--tooth-condition` named one) and the missing ones. SprintRay answers with one presigned
 link per segmented tooth plus one per arch's gingiva, and the run PUTs a mesh to each, several at
 a time — so it ends exactly the way a real session does. Those meshes are session metadata: nothing is called after the
 PUT, and they never appear in the doctor's Cloud Drive. Form B (`--code`, no launch URL) has no

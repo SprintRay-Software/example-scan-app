@@ -2,9 +2,9 @@
 // and pushes one event the web app can act on. Without it SprintRay can only guess "the scan
 // is done" from individual upload events, which cannot tell "one arch arrived" from "finished".
 //
-// It is also where the app reports WHAT the session captured — scan mode, missing teeth,
-// segmented teeth, which arches — and SprintRay answers with presigned PUT links for the
-// segmented-tooth and gingiva meshes (see artifacts.js, which uploads them).
+// It is also where the app reports WHAT the session captured — scan mode, missing teeth, the
+// segmented teeth and the state each is in, which arches — and SprintRay answers with presigned
+// PUT links for the segmented-tooth and gingiva meshes (see artifacts.js, which uploads them).
 //
 // This is the LAST SprintRay call the desktop app makes, after its final scan upload. Fully
 // reported (request + response) via the injected reporter, like every other call.
@@ -17,8 +17,10 @@ function describeError(status, body) {
   switch (status) {
     case 400:
       // Two ways in: no id at all, or metadata SprintRay refuses (a tooth number outside 1-32,
-      // the same toothNumber twice, a filename whose extension is not allowed). The body says
-      // which, so it is quoted above rather than guessed at here.
+      // the same toothNumber twice, a filename whose extension is not allowed, a condition
+      // outside the enum). The body says which, so it is quoted above rather than guessed at
+      // here. The condition case should never reach the wire — parseToothConditions rejects it
+      // at the CLI — but a caller building the report itself can still trip it.
       return `completeScanJob: 400 — no id was sent, or the reported scan metadata is malformed${snippet}`;
     case 401:
       return `completeScanJob: 401 unauthorized — the doctor's access token is missing or expired${snippet}`;
@@ -42,7 +44,8 @@ function describeLinks(job) {
 /**
  * POST {baseUrl}/integration/scan-job/complete
  *   Authorization: Bearer <accessToken>   x-api-key: <apiKey>
- *   { id, caseId?, scanMode?, hasUpper?, hasLower?, missingTeeth?, segmentedTeeth? }
+ *   { id, caseId?, scanMode?, hasUpper?, hasLower?, missingTeeth?,
+ *     segmentedTeeth?: { toothNumber, filename?, confidence?, condition? }[] }
  *
  * `id` is the launch payload's `case.ID`. (`scanJobId` is the original name for the same field
  * and is still accepted, so a shipped app needs no change; `id` wins when both are sent.)
