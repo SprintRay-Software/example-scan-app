@@ -15,6 +15,7 @@
     "app:dev": "electron . --env-file=.env.dev",
     "app:staging": "electron . --env-file=.env.staging",
     "app:prod": "electron . --env-file=.env.prod",
+    "test": "node --test",
     "start": "node --env-file=.env src/index.js",
     "start:staging": "node --env-file=.env.staging src/index.js",
     "serve": "node --env-file-if-exists=.env src/index.js serve",
