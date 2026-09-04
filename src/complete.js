@@ -2,9 +2,9 @@
 // and pushes one event the web app can act on. Without it SprintRay can only guess "the scan
 // is done" from individual upload events, which cannot tell "one arch arrived" from "finished".
 //
-// It is also where the app reports WHAT the session captured — scan mode, missing teeth,
-// segmented teeth, which arches — and SprintRay answers with presigned PUT links for the
-// segmented-tooth and gingiva meshes (see artifacts.js, which uploads them).
+// It is also where the app reports WHAT the session captured — scan mode, missing teeth, the
+// segmented teeth and the state each is in, which arches — and SprintRay answers with presigned
+// PUT links for the segmented-tooth and gingiva meshes (see artifacts.js, which uploads them).
 //
 // This is the LAST SprintRay call the desktop app makes, after its final scan upload. Fully
 // reported (request + response) via the injected reporter, like every other call.
@@ -42,7 +42,8 @@ function describeLinks(job) {
 /**
  * POST {baseUrl}/integration/scan-job/complete
  *   Authorization: Bearer <accessToken>   x-api-key: <apiKey>
- *   { id, caseId?, scanMode?, hasUpper?, hasLower?, missingTeeth?, segmentedTeeth? }
+ *   { id, caseId?, scanMode?, hasUpper?, hasLower?, missingTeeth?,
+ *     segmentedTeeth?: { toothNumber, filename?, confidence?, condition? }[] }
  *
  * `id` is the launch payload's `case.ID`. (`scanJobId` is the original name for the same field
  * and is still accepted, so a shipped app needs no change; `id` wins when both are sent.)
