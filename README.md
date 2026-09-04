@@ -133,6 +133,30 @@ sequenceDiagram
 > The `auth`, `treatmentId` and `externalCaseId` fields are the SprintRay
 > silent-auth + upload context; the rest is the standard ScanPro launch payload.
 
+**Local scan history.** This example remembers the scans it has already sent, keyed on
+`externalCaseId` and on nothing else, so that re-launching a case you have already sent opens the
+stored scan instead of capturing it a second time. The key engages only when `externalCaseId` is
+present and differs from `case.ID` — an id equal to the session id identifies no case — and only
+when it is a plain token: at most 100 characters, starting with a letter or digit, otherwise
+letters, digits, `.`, `_` and `-`. Anything else is refused outright rather than cleaned up,
+because the id becomes a directory name under the app's state dir and a payload field must never
+be able to steer where this app writes. SprintRay's web app sends no `externalCaseId`, so on a
+real SprintRay launch history never engages and the flow runs exactly as it did before.
+
+An entry is written only when every requested upload succeeded **and** the scan-finish call
+returned. Until the session is closed SprintRay has no completed scan job, so an entry written over
+a failed finish would claim "already sent" for a case that shows nothing to open — a miss costs one
+re-capture, a wrong hit costs the trust in every hit. Mesh uploads are deliberately not part of that
+gate: they are session metadata, they leave the scan itself whole, and at up to 34 links they are
+the flakiest step in the run.
+
+What a match does depends on the surface, and deliberately so. The desktop UI opens the stored
+scan and stops there: a new launch carries a *new* one-time code, and spending it would open a
+real session nobody asked for, so re-sending stays the doctor's decision. The CLI reports the
+match and then runs the flow normally — typing the command is itself the ask, and an integrator
+re-sending a known case is the documented path. History is local to the install: it is never
+uploaded, and it changes nothing on the wire.
+
 ## API contract
 
 Three calls. All go through the SprintRay API gateway; `{ORIGIN}` is the fixed gateway origin for

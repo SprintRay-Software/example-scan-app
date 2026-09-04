@@ -22,6 +22,10 @@ contextBridge.exposeInMainWorld('scanpro', {
   // page cannot read them itself
   readFixture: (arch) => ipcRenderer.invoke('fixture:read', arch),
 
+  // raw bytes of one file from a stored scan, addressed by the case key and file name that came
+  // in on the launch's `history` entry — the renderer never names a path
+  readHistoryFile: (caseKey, fileName) => ipcRenderer.invoke('history:read', caseKey, fileName),
+
   // run the device-login + upload flow; events stream via onFlowEvent
   runFlow: (params) => ipcRenderer.invoke('flow:run', params),
 
@@ -35,8 +39,9 @@ contextBridge.exposeInMainWorld('scanpro', {
     return () => ipcRenderer.removeListener('flow:event', listener);
   },
 
-  // a launch payload arrived — { url, source } where source is 'os' (the URL scheme)
-  // or 'local-server' (POST /scanpro/v1/start on 127.0.0.1)
+  // a launch payload arrived — { url, source, history } where source is 'os' (the URL scheme)
+  // or 'local-server' (POST /scanpro/v1/start on 127.0.0.1), and history is the stored session
+  // for this case, or null when there is none to open
   onLaunch: (cb) => {
     const listener = (_event, launch) => cb(launch);
     ipcRenderer.on('launch', listener);

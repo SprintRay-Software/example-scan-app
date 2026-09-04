@@ -20,6 +20,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { normalizeBaseUrl, loadLocalServerConfig } from '../src/config.js';
 import { runFlow, decodeLaunch } from '../src/core/flow.js';
 import { createReporter } from '../src/core/reporter.js';
+import { createHistoryStore, historyKeyFor } from '../src/history.js';
 import { startScanProLocalServer, summarizeArgument } from '../src/local-server/index.js';
 import { createLaunchTelemetry } from '../src/telemetry.js';
 
@@ -166,10 +167,26 @@ function createWindow() {
     const queued = pendingLaunch;
     pendingLaunch = null;
     if (queued) {
-      mainWindow.webContents.send('launch', { url: queued.url, source: queued.source });
-      // A launch that had to wait for the window still has to end up in front of the user.
-      revealWindow(mainWindow);
-      queued.resolve(true);
+      // Same enrichment as a launch that arrived with the window already up: the entry was
+      // resolved once when the launch was stamped, and this replays that one answer.
+      queued.history
+        .then((entry) => {
+          // The same guard the immediate path uses, and for a reason this path only just acquired:
+          // `mainWindow` is nulled by the 'closed' handler below, so a window that has been
+          // destroyed but whose handler has not run yet is non-null AND dead. Resolving history
+          // put an await in front of this send, which is what makes that gap reachable.
+          if (!mainWindow || mainWindow.isDestroyed()) return queued.resolve(false);
+          mainWindow.webContents.send('launch', { url: queued.url, source: queued.source, history: entry });
+          // A launch that had to wait for the window still has to end up in front of the user.
+          revealWindow(mainWindow);
+          queued.resolve(true);
+        })
+        // Settle rather than swallow: /start blocks on this promise, so a throw that left it
+        // pending would hang the caller for the full launch timeout instead of answering it.
+        .catch((err) => {
+          console.log(`[launch] queued delivery failed: ${err.message}`);
+          queued.resolve(false);
+        });
     }
   });
 
@@ -218,6 +235,39 @@ function revealWindow(win) {
 // reported as failed. /start blocks on this, so it needs a bound.
 const LAUNCH_TIMEOUT_MS = 30_000;
 
+// One store for the process, built on first use. Electron keeps its scan history beside
+// identity.json under `userData`; SCANPRO_STATE_DIR is the CLI's and the headless service's state
+// dir and is deliberately not read here, so two front ends on one machine never share a history.
+// Lazy because the first launch can arrive before whenReady on macOS — app.getPath() is already
+// called on that same path for the telemetry defaults below, which is what makes this safe.
+let historyStoreInstance = null;
+function historyStore() {
+  historyStoreInstance ??= createHistoryStore({ stateDir: app.getPath('userData') });
+  return historyStoreInstance;
+}
+
+/**
+ * The stored session for a launch, or null when this case has none.
+ *
+ * History is an enrichment, never a gate: every failure here degrades to null and the launch is
+ * delivered exactly as it was before this feature existed. The catch earns its place because
+ * `decodeLaunch` throws on a payload this app cannot read, and an undecodable launch URL is a
+ * normal thing to receive — the renderer reports that failure itself, and it must not also cost
+ * the user the launch. `lookup` is not what the catch is for: a miss, a rejected key and a damaged
+ * entry are already null on its own contract.
+ */
+async function resolveHistory(url, source) {
+  try {
+    const { fields } = decodeLaunch(url);
+    const key = historyKeyFor(fields);
+    if (!key) return null;
+    return await historyStore().lookup(key);
+  } catch (err) {
+    console.log(`[history] launch via ${source} not resolved: ${err.message}`);
+    return null;
+  }
+}
+
 /**
  * Hand a launch payload to the window, creating and revealing it as needed.
  * @returns {Promise<boolean>} true once the renderer has actually received it
@@ -243,10 +293,24 @@ function deliverLaunch(url, source = 'os') {
   };
   console.log(`[telemetry] scanner.connected stamped for the launch via ${source}`);
 
+  // Resolved once, here, at the moment the launch is stamped — both transports converge on this
+  // function, so neither one needs its own lookup and the immediate and queued deliveries below
+  // hand the renderer the same answer by construction.
+  //
+  // Held as a promise rather than awaited because everything from here to `pendingLaunch = …`
+  // must stay synchronous: on a macOS cold launch open-url runs before whenReady, and yielding to
+  // the event loop first would let whenReady's createWindow() and its did-finish-load flush race
+  // ahead of the queue entry and deliver a window with no launch in it.
+  const history = resolveHistory(url, source);
+
   if (mainWindow && rendererReady) {
-    mainWindow.webContents.send('launch', { url, source });
-    revealWindow(mainWindow);
-    return Promise.resolve(true);
+    const win = mainWindow;
+    return history.then((entry) => {
+      if (win.isDestroyed()) return false;
+      win.webContents.send('launch', { url, source, history: entry });
+      revealWindow(win);
+      return true;
+    });
   }
 
   return new Promise((resolve) => {
@@ -260,7 +324,7 @@ function deliverLaunch(url, source = 'os') {
       resolve(ok);
     }
 
-    pendingLaunch = { url, source, resolve: settle };
+    pendingLaunch = { url, source, history, resolve: settle };
     // Only build the window once Electron is ready. A cold launch through the URL scheme
     // delivers open-url BEFORE whenReady on macOS, and constructing a BrowserWindow at that
     // point throws and takes the process down — the app dies on the very launch it was
@@ -483,6 +547,23 @@ ipcMain.handle('fixture:read', (_event, arch) => {
   }
 });
 
+// A stored scan reaches the demo skin's 3D view the same way a bundled one does, and for the same
+// reason: a file:// page under this CSP cannot read the bytes itself.
+//
+// The renderer names a case and a file and never a path. The store re-validates both against its
+// own allowlist, so the only thing a renderer string can do is fail to match — it can never steer
+// where this reads from.
+ipcMain.handle('history:read', async (_event, caseKey, fileName) => {
+  try {
+    return { ok: true, bytes: new Uint8Array(await historyStore().readFile(caseKey, fileName)) };
+  } catch (err) {
+    // Unlike lookup, readFile throws — on a rejected key or name, and on a file that is gone. All
+    // of that is reachable from the renderer, so it is answered rather than left to reject: an
+    // unhandled rejection in main is not the right outcome for a missing scan file.
+    return { ok: false, error: err.message };
+  }
+});
+
 // "Return to the browser" — what a desktop scanner app does once the case is on its way: get
 // out of the way so whatever the doctor came from is in front again. Hiding the app (macOS) or
 // minimizing the window (Windows/Linux) is what actually puts the previous app back on top;
@@ -538,7 +619,13 @@ ipcMain.handle('flow:run', async (event, params) => {
     launchUrl && pendingLaunchTelemetry?.url?.trim() === launchUrl ? pendingLaunchTelemetry.telemetry : null;
 
   try {
-    const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR, launchTelemetry });
+    const summary = await runFlow(reporter, {
+      config,
+      input,
+      fixturesDir: FIXTURES_DIR,
+      launchTelemetry,
+      history: historyStore(),
+    });
     return { ok: true, summary };
   } catch (err) {
     send('fail', { msg: err.message });
