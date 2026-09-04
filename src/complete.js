@@ -17,8 +17,10 @@ function describeError(status, body) {
   switch (status) {
     case 400:
       // Two ways in: no id at all, or metadata SprintRay refuses (a tooth number outside 1-32,
-      // the same toothNumber twice, a filename whose extension is not allowed). The body says
-      // which, so it is quoted above rather than guessed at here.
+      // the same toothNumber twice, a filename whose extension is not allowed, a condition
+      // outside the enum). The body says which, so it is quoted above rather than guessed at
+      // here. The condition case should never reach the wire — parseToothConditions rejects it
+      // at the CLI — but a caller building the report itself can still trip it.
       return `completeScanJob: 400 — no id was sent, or the reported scan metadata is malformed${snippet}`;
     case 401:
       return `completeScanJob: 401 unauthorized — the doctor's access token is missing or expired${snippet}`;

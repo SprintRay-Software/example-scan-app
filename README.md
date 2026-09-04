@@ -324,10 +324,16 @@ Content-Length: <fileSize>
   session metadata, not treatment files: they never attach to the treatment and never show up in the
   doctor's Cloud Drive.
 
-Errors: `400` no id at all, a tooth number outside 1-32, the same `toothNumber` twice, or a
-`filename` whose extension is not allowed · `401` expired/missing access token · `403` missing or
-invalid `x-api-key` · `404` no such session, **or** it belongs to another doctor (the two are
-deliberately indistinguishable).
+Errors: `400` no id at all, a tooth number outside 1-32, the same `toothNumber` twice, a
+`filename` whose extension is not allowed, or a `condition` outside the enum · `401`
+expired/missing access token · `403` missing or invalid `x-api-key` · `404` no such session,
+**or** it belongs to another doctor (the two are deliberately indistinguishable).
+
+That last `400` is the one to watch, because it does **not** behave like the other names you send.
+`scanMode` and `externalScanFileType` are free vocabularies — a name SprintRay has not seen is
+registered against your integration and the call succeeds. `condition` is closed, so a misspelling
+fails the **whole** finish call: it is neither registered nor quietly dropped. Omitting the key, or
+sending `null`, is always fine — the error is for a value that is present and wrong.
 
 ### 4. Read a scan session back (optional)
 
