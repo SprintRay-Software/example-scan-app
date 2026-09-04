@@ -18,6 +18,7 @@ import { runFlow } from './core/flow.js';
 import { createConsoleReporter } from './core/console-reporter.js';
 import { startScanProLocalServer, summarizeArgument } from './local-server/index.js';
 import { createLaunchTelemetry } from './telemetry.js';
+import { createHistoryStore } from './history.js';
 import { schemeStatus } from './scheme/index.js';
 import { openWithOsHandler, waitForApplication } from './scheme/open.js';
 
@@ -206,6 +207,9 @@ export async function runServeCommand(argv, env = process.env) {
           input: { launchUrl: argument },
           fixturesDir: FIXTURES_DIR,
           launchTelemetry,
+          // Only this path runs the flow in-process. Without --run-flow the launch goes to the OS
+          // handler, and the app that starts up records the case against its own state dir.
+          history: createHistoryStore({ stateDir: env.SCANPRO_STATE_DIR || undefined }),
         });
         if (summary.ok) return { started: true };
         return {

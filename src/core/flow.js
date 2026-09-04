@@ -23,6 +23,7 @@ import { uploadScanArtifacts } from '../artifacts.js';
 import { mapWithConcurrency, toPositiveInt } from './concurrency.js';
 import { createBufferingReporter } from './reporter.js';
 import { buildScanReport, describeScanReport, DEFAULT_SCAN_MODE, DEFAULT_SCAN_FILE_TYPES } from '../scan-report.js';
+import { historyKeyFor } from '../history.js';
 
 // Files go up concurrently. This is how many at once when nothing overrides it — a run only ever
 // has two scans, so it is the mesh batch (up to 34 PUTs) that this number is really for.
@@ -97,7 +98,7 @@ function buildUpload(treatmentFileType, fileTypeSource, input, fixturesDir, voca
  * @returns {Promise<{ ok: boolean, results: object[], failures: object[],
  *                     completed: object|null, report: object|null, meshes: object[] }>}
  */
-export async function runFlow(reporter, { config, input, fixturesDir, launchTelemetry }) {
+export async function runFlow(reporter, { config, input, fixturesDir, launchTelemetry, history }) {
   let baseUrl = config.baseUrl;
   let tokenPath = DEFAULT_TOKEN_PATH;
   let code;
@@ -106,6 +107,8 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
   let externalCaseId;
   // Requested TreatmentFiles type from the launch payload; null = full-mouth scan (both arches).
   let payloadFileType = null;
+  // The key this run's scans are stored under, or null when history stays out of the run.
+  let historyKey = null;
 
   const hasFormA = Boolean(input.launchUrl && String(input.launchUrl).trim());
 
@@ -135,6 +138,33 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
         : `launch payload fileType = ${payloadFileType} (${fileTypeName(payloadFileType)})`
     );
     reporter.phase('decode', 'done', `code=${code}`);
+
+    // What we already know about this case, before a single byte goes out. Only a launch payload
+    // carries a case identity, which is why this lives in the Form A branch: Form B reuses the
+    // treatment id as its case reference and has no session to remember. A hit is narrated here,
+    // ahead of the token exchange, so a doctor re-sending a case they have sent before reads that
+    // fact while the one-time code is still unspent. The run then proceeds normally — typing the
+    // command IS the ask; "open the stored scan instead" is the desktop UI's behaviour, not the
+    // CLI's, and a CLI that stopped could never re-send a known case.
+    if (history) {
+      historyKey = historyKeyFor(fields);
+      if (historyKey) {
+        const entry = await history.lookup(historyKey);
+        if (entry) {
+          reporter.info(
+            `history: externalCaseId ${historyKey} already sent ${entry.savedAt} ` +
+              `(${entry.files.length} file(s)) — ${entry.dir}`
+          );
+        }
+      } else if (externalCaseId && externalCaseId !== scanJobId) {
+        // A case id this app cannot make a directory name of. Say which rule it broke, since the
+        // fix is on the SprintRay side of the payload, not here.
+        reporter.info(
+          `history: not tracking externalCaseId "${externalCaseId}" — a tracked case id must match ` +
+            '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$'
+        );
+      }
+    }
   } else {
     reporter.phase('decode', 'done', 'explicit flags (no launch URL)');
     reporter.step('Form B: using explicit flags');
@@ -271,6 +301,10 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
     }
   );
 
+  // Snapshot now, before the finish call and the mesh batch can add to `failures`: what gates the
+  // history write below is whether every requested scan went up, not what happened after they did.
+  const uploadFailures = failures.length;
+
   // 3) Tell SprintRay the session is over, and report what it captured. Only a real Form A
   // launch has a scan session to finish; Form B has no case.ID, so it reports the step as
   // skipped rather than guessing an id.
@@ -335,6 +369,42 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
   }
 
   const summary = { ok: failures.length === 0, results, failures, completed, report, meshes };
+
+  // Remember the session only once it is a whole send. An entry is a CLAIM — "we already sent this
+  // case" — and in this contract a send is the uploads AND the finish call: until the finish lands,
+  // SprintRay has no completed scan job, so an entry written over a failed finish would make this
+  // app claim "already sent" while the doctor's case still shows nothing to open. That hit would
+  // contradict the very surface the stored scan exists to serve. A miss costs one re-capture; a
+  // wrong hit costs the trust in every hit. `completed` is null unless the finish call returned.
+  //
+  // Mesh PUTs are deliberately NOT part of the gate: they are session metadata with nothing to
+  // call after them, they leave the scan itself whole, and at up to 34 links they are the flakiest
+  // step in the run — gating on them would make the stored scan miss in exactly the case it is for.
+  if (history && historyKey && uploadFailures === 0 && completed !== null) {
+    try {
+      const stored = await history.record(
+        {
+          externalCaseId,
+          scanJobId,
+          treatmentId,
+          scanMode: vocabulary.scanMode,
+          uploads: uploads.map((u) => ({
+            fileName: u.fileName,
+            arch: u.arch,
+            treatmentFileType: u.treatmentFileType,
+            externalScanFileType: u.externalScanFileType,
+          })),
+        },
+        uploads.map((u) => ({ path: u.filePath, fileName: u.fileName }))
+      );
+      reporter.info(`history: recorded ${historyKey} (${stored.files.length} file(s))`);
+    } catch (err) {
+      // Loud, but never fatal: the scans are already on SprintRay's side by now, so a local
+      // bookkeeping failure must not turn a successful run into a failed one.
+      reporter.fail(`history: write failed — ${err.message}`);
+    }
+  }
+
   reporter.result(summary);
   return summary;
 }

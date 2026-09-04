@@ -27,6 +27,7 @@ import { parseTeethList } from './scan-report.js';
 import { fail, info } from './log.js';
 import { runFlow } from './core/flow.js';
 import { createLaunchTelemetry } from './telemetry.js';
+import { createHistoryStore } from './history.js';
 import { createConsoleReporter } from './core/console-reporter.js';
 import { SCHEME_COMMANDS, runSchemeCommand } from './scheme-cli.js';
 import { SERVE_COMMANDS, SERVE_USAGE, runServeCommand } from './serve-cli.js';
@@ -266,7 +267,17 @@ async function main() {
       })
     : null;
 
-  const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR, launchTelemetry });
+  // Where this run's scans get remembered. `SCANPRO_STATE_DIR` is identity's variable, not a
+  // second one for history: the two files live side by side, so they answer to the same override.
+  const history = createHistoryStore({ stateDir: process.env.SCANPRO_STATE_DIR || undefined });
+
+  const summary = await runFlow(reporter, {
+    config,
+    input,
+    fixturesDir: FIXTURES_DIR,
+    launchTelemetry,
+    history,
+  });
   process.exit(summary.ok ? 0 : 1);
 }
 
