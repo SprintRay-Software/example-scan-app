@@ -25,8 +25,7 @@ export function loadConfig(env = process.env) {
   }
 
   return {
-    // Normalize to an origin: strip a trailing slash and a trailing /api. Gateway paths do
-    // NOT carry an /api prefix, so the base must be the origin only.
+    // Keep the path prefix: direct backend URLs include /api; gateway URLs do not.
     baseUrl: normalizeBaseUrl(env.SCANPRO_BASE_URL),
     // Sent as x-api-key on every SprintRay call; the gateway rejects with 403 without it.
     apiKey: String(env.SCANPRO_API_KEY).trim(),
@@ -49,10 +48,7 @@ export function loadConfig(env = process.env) {
 }
 
 export function normalizeBaseUrl(value) {
-  return String(value)
-    .trim()
-    .replace(/\/+$/, '')
-    .replace(/\/api$/i, '');
+  return String(value).trim().replace(/\/+$/, '');
 }
 
 // ---------------------------------------------------------------------------

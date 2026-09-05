@@ -1,13 +1,5 @@
-// Scan-finish call: tells SprintRay the scan session is over, so it closes the scan job out
-// and pushes one event the web app can act on. Without it SprintRay can only guess "the scan
-// is done" from individual upload events, which cannot tell "one arch arrived" from "finished".
-//
-// It is also where the app reports WHAT the session captured — scan mode, missing teeth,
-// segmented teeth, which arches — and SprintRay answers with presigned PUT links for the
-// segmented-tooth and gingiva meshes (see artifacts.js, which uploads them).
-//
-// This is the LAST SprintRay call the desktop app makes, after its final scan upload. Fully
-// reported (request + response) via the injected reporter, like every other call.
+// Save scan metadata and request mesh links through complete, then notify uploaded only
+// after every upload succeeds. The uploaded callback closes the job and publishes AppSync.
 
 import { httpJson, joinUrl } from './core/net.js';
 
@@ -49,13 +41,13 @@ function describeLinks(job) {
  * `caseId` is only a fallback for a client that did not keep the id — it is not unique per
  * launch, so SprintRay resolves the newest session carrying it.
  *
- * Every metadata field is optional: pass no `report` and this is the pre-metadata call, which
- * still closes the session out. Idempotent either way — a retry re-issues links to the SAME S3
+ * Every metadata field is optional. This call leaves the session open for uploads.
+ * Idempotent — a retry re-issues links to the SAME S3
  * objects and overwrites the metadata, so a same-payload retry converges.
  *
  * @param {object} opts
  * @param {import('./scan-report.js').buildScanReport|null} [opts.report] what the session captured
- * @returns {Promise<object|null>} the finished session + its mesh upload links
+ * @returns {Promise<object>} the session + its mesh upload links
  */
 export async function completeScanJob(
   reporter,
@@ -71,11 +63,7 @@ export async function completeScanJob(
   const body = { id: scanJobId, caseId: externalCaseId, ...(report ?? {}) };
 
   reporter.phase('complete', 'active', `id=${scanJobId}`);
-  reporter.step(
-    report
-      ? `Finishing the scan session and reporting what it captured (id=${scanJobId})`
-      : `Finishing the scan session with no metadata (id=${scanJobId})`
-  );
+  reporter.step(`Saving scan metadata and requesting mesh upload links (id=${scanJobId})`);
 
   const { res, text } = await httpJson(reporter, {
     label: 'scan-job/complete',
@@ -94,10 +82,35 @@ export async function completeScanJob(
   try {
     job = JSON.parse(text);
   } catch {
-    // The status alone is the contract; a body we cannot parse is not a failure.
+    throw new Error('completeScanJob: invalid session response');
   }
 
-  reporter.ok(`Scan session finished${job?.status ? ` (status ${job.status})` : ''} — ${describeLinks(job)}`);
-  reporter.phase('complete', 'done', `HTTP ${res.status} — ${describeLinks(job)}`);
+  if (!job) {
+    throw new Error('completeScanJob: missing session');
+  }
+  reporter.ok(`Scan metadata saved — ${describeLinks(job)}`);
+  return job;
+}
+
+/** Notify the backend that all scan and mesh uploads succeeded. */
+export async function markScanJobUploaded(reporter, { baseUrl, apiKey, accessToken, scanJobId }) {
+  const { res, text } = await httpJson(reporter, {
+    label: 'scan-job/uploaded',
+    method: 'POST',
+    url: joinUrl(baseUrl, `integration/scan-job/${encodeURIComponent(scanJobId)}/uploaded`),
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      'x-api-key': apiKey,
+    },
+  });
+  if (!res.ok) {
+    reporter.phase('complete', 'error', `HTTP ${res.status}`);
+    throw new Error(`scan-job/uploaded: HTTP ${res.status} — ${text.slice(0, 800)}`);
+  }
+  const job = JSON.parse(text);
+  if (job?.status !== 3) throw new Error('scan-job/uploaded: missing Done status');
+  reporter.ok('Scan session finished — all uploads succeeded');
+  reporter.phase('complete', 'done', `HTTP ${res.status}`);
   return job;
 }

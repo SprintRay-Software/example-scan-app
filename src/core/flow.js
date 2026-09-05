@@ -18,7 +18,7 @@ import {
 } from '../payload.js';
 import { exchangeCodeForTokens, refreshTokens } from '../auth.js';
 import { uploadFixture } from '../upload.js';
-import { completeScanJob } from '../complete.js';
+import { completeScanJob, markScanJobUploaded } from '../complete.js';
 import { uploadScanArtifacts } from '../artifacts.js';
 import { mapWithConcurrency, toPositiveInt } from './concurrency.js';
 import { createBufferingReporter } from './reporter.js';
@@ -249,17 +249,13 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     }
   );
 
-  // 3) Tell SprintRay the session is over, and report what it captured. Only a real Form A
-  // launch has a scan session to finish; Form B has no case.ID, so it reports the step as
-  // skipped rather than guessing an id.
-  //
-  // The report describes the CAPTURE, not the transfer: it is built from the arches this session
-  // scanned, so an arch whose upload failed above is still reported as captured. `--no-metadata`
-  // sends none of it — the pre-metadata call, which still closes the session out.
+  // 3) Save the scan metadata and get mesh links without completing the session.
+  // Failed scan uploads must never close the job. Form B has no session to finish.
   let completed = null;
+  let prepared = null;
   let report = null;
   let meshes = [];
-  if (scanJobId) {
+  if (scanJobId && failures.length === 0) {
     if (!input.noMetadata) {
       report = buildScanReport({
         arches: uploads.map((u) => u.arch).filter((a) => a !== null),
@@ -273,7 +269,7 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
     }
 
     try {
-      completed = await completeScanJob(reporter, {
+      prepared = await completeScanJob(reporter, {
         baseUrl,
         apiKey: config.apiKey,
         accessToken: tokens.access_token,
@@ -288,11 +284,10 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
       failures.push({ step: 'scan-job/complete', error: err.message });
     }
 
-    // 4) PUT each segmented-tooth and gingiva mesh to the link the finish call returned. Nothing
-    // follows this — the meshes are session metadata, so there is no confirm to call.
-    if (completed) {
+    // 4) Upload the meshes, then report Done only when every upload succeeded.
+    if (prepared) {
       const artifacts = await uploadScanArtifacts(reporter, {
-        job: completed,
+        job: prepared,
         concurrency,
         toothFilePath: input.toothFileOverride
           ? resolve(input.toothFileOverride)
@@ -303,9 +298,25 @@ export async function runFlow(reporter, { config, input, fixturesDir }) {
       });
       meshes = artifacts.results;
       failures.push(...artifacts.failures);
+      if (failures.length === 0) {
+        try {
+          completed = await markScanJobUploaded(reporter, {
+            baseUrl,
+            apiKey: config.apiKey,
+            accessToken: tokens.access_token,
+            scanJobId,
+          });
+        } catch (err) {
+          reporter.fail(err.message);
+          failures.push({ step: 'scan-job/uploaded', error: err.message });
+        }
+      }
     } else {
       reporter.phase('meshes', 'skipped', 'the session was not finished');
     }
+  } else if (scanJobId) {
+    reporter.phase('complete', 'skipped', 'scan uploads failed');
+    reporter.phase('meshes', 'skipped', 'scan uploads failed');
   } else {
     reporter.phase('complete', 'skipped', 'no scan session (Form B)');
     reporter.info('Skipping scan-job/complete: this run has no launch payload, so no case.ID.');
