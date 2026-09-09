@@ -364,6 +364,25 @@
             <input id="in-refresh" type="checkbox" />
             <span>Also exercise the token-refresh endpoint</span>
           </label>
+          <!-- What each segmented tooth IS, reported by the finish call. A real scanner knows
+               this from its own capture; here the tester paints it on the chart. -->
+          <div class="cond-block">
+            <div class="sub-head">
+              <h3>Tooth conditions</h3>
+              <button id="btn-teeth-clear" class="btn btn-ghost btn-sm" type="button">Clear all</button>
+            </div>
+            <!-- the conditions and the chart are both built from TOOTH_CONDITIONS in app.js -->
+            <div id="cond-seg" class="seg seg-cond" role="radiogroup" aria-label="Condition to apply"></div>
+            <div id="teeth-chart" class="teeth-chart"></div>
+            <div id="teeth-summary" class="teeth-summary"></div>
+            <span class="hint">
+              Pick a condition, then click the teeth that are in it; clicking a tooth again clears
+              it. Top row is the upper arch (1&ndash;16), bottom the lower (32&ndash;17), always
+              universal numbering. Conditions ride on the <code>scan-job/complete</code> call, so a
+              <em>Manual code</em> run &mdash; no <code>case.ID</code> &mdash; never sends them, and
+              a tooth outside the captured arch is dropped from the report.
+            </span>
+          </div>
         </section>
 
         <div class="run-row">

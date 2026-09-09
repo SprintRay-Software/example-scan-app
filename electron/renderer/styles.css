@@ -126,6 +126,45 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .run-row { display: flex; gap: 8px; }
 .run-row .btn-primary { flex: 1 1 auto; }
 
+/* ---------------- tooth-condition picker ---------------- */
+/* A dental chart in the Upload panel: pick a condition, click the teeth in it. Each condition
+   keeps one colour across the brush and the chart, so the chart reads without a legend. */
+.cond-block { margin: 14px 0 12px; }
+.sub-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.sub-head h3 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+
+.seg-cond { display: flex; width: 100%; margin-bottom: 8px; }
+.seg-cond .seg-btn { flex: 1 1 0; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 4px; }
+.cond-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.seg-btn[data-cond="prepared"] { color: var(--amber); }
+.seg-btn[data-cond="missing"] { color: var(--red); }
+.seg-btn[data-cond="restored"] { color: var(--purple); }
+.seg-btn[data-cond].seg-active { background: var(--bg-elev); border: 1px solid currentColor; }
+
+.teeth-chart { display: flex; flex-direction: column; gap: 3px; }
+.teeth-row { display: grid; grid-template-columns: repeat(16, 1fr); gap: 2px; }
+/* An extra gap at the midline, so a number is read as a quadrant rather than counted to. */
+.teeth-row .tooth:nth-child(8) { margin-right: 4px; }
+.tooth {
+  min-width: 0; padding: 5px 0;
+  font-family: var(--mono); font-size: 9.5px; line-height: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.tooth:hover { border-color: var(--accent); color: var(--text); }
+.tooth[data-cond="prepared"] { background: color-mix(in srgb, var(--amber) 28%, var(--bg-input)); border-color: color-mix(in srgb, var(--amber) 60%, transparent); color: #f6e2b4; }
+.tooth[data-cond="missing"] { background: color-mix(in srgb, var(--red) 28%, var(--bg-input)); border-color: color-mix(in srgb, var(--red) 60%, transparent); color: #ffd0cf; }
+.tooth[data-cond="restored"] { background: color-mix(in srgb, var(--purple) 28%, var(--bg-input)); border-color: color-mix(in srgb, var(--purple) 60%, transparent); color: #e5d5ff; }
+/* A tooth the run does not capture: still clickable, but the report would drop it. */
+.tooth.out-of-scope { opacity: 0.4; }
+
+.teeth-summary { margin: 8px 0 6px; font-size: 11px; }
+.teeth-summary code { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); word-break: break-all; }
+.teeth-warn { margin-top: 4px; font-family: var(--mono); font-size: 10.5px; color: var(--amber); }
+
 /* ---------------- banner ---------------- */
 .banner { border-radius: 8px; padding: 10px 14px; font-size: 13px; border: 1px solid var(--border-strong); }
 .banner-ok { background: color-mix(in srgb, var(--green) 14%, var(--bg-panel)); border-color: color-mix(in srgb, var(--green) 45%, transparent); color: #bff0d3; }

@@ -574,7 +574,11 @@ npm run app -- --env-file=.env.qa        # 也可以用 SCANPRO_ENV_FILE=.env.qa
 
 - **左侧 —— 配置与输入。** 网关 origin、API key、client id/secret、URL scheme 会从 `.env` 预填(可按次修改)。
   粘贴 `openScanPro://<base64>` **启动 URL**,或切到 **Manual code** 用显式 `code` + treatment id 运行;
-  还可分别为上颌、下颌指定自定义扫描文件,并勾选是否额外走 token 刷新步骤。
+  还可分别为上颌、下颌指定自定义扫描文件,并勾选是否额外走 token 刷新步骤。**Tooth conditions**
+  即 `--tooth-condition` 的牙位图版本:先选一种 condition,再点属于它的牙齿(再点一次取消),
+  图下方那行给出等价的命令行参数值,可直接复制到 CLI 复现同一次运行。牙位号一律为 universal
+  编号(上排 `1`&ndash;`16`,下排 `32`&ndash;`17`);解析出 payload 后,本次不采集的那一颌会置灰
+  —— 上报时这些牙齿会被丢掉。
 - **右侧 —— 观测区。**
   - **Pipeline** —— 桌面应用侧的步骤按序展示(解析 → 换 token → 可选刷新 → 预签名 URL → S3 PUT →
     结束会话 → PUT 牙齿/牙龈网格),每步显示实时状态与一行摘要。
