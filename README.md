@@ -619,7 +619,11 @@ three parts:
 - **Left — Configuration & input.** Gateway origin, API key, client id/secret, and URL scheme are prefilled
   from `.env` (editable per run). Paste a `openScanPro://<base64>` **launch URL**, or switch to
   **Manual code** to run with an explicit `code` + treatment id. Optionally pick a custom scan file
-  for the upper and lower arch separately, and toggle the token-refresh step.
+  for the upper and lower arch separately, and toggle the token-refresh step. **Tooth conditions**
+  is the `--tooth-condition` flag as a dental chart: pick a condition, click the teeth in it (click
+  again to clear), and the line under the chart shows the flag value that reproduces the same run
+  on the CLI. Numbers are universal (top row `1`&ndash;`16`, bottom `32`&ndash;`17`); once a payload
+  is decoded, teeth outside the arch it captures are dimmed, because the report drops them.
 - **Right — Observability.**
   - **Pipeline** — the desktop-app steps in order (decode → exchange → optional refresh → presigned
     URL → S3 PUT → finish the session → PUT the tooth/gingiva meshes), each showing live status and

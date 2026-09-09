@@ -21,6 +21,7 @@ import { normalizeBaseUrl, loadLocalServerConfig } from '../src/config.js';
 import { runFlow, decodeLaunch } from '../src/core/flow.js';
 import { createReporter } from '../src/core/reporter.js';
 import { startScanProLocalServer, summarizeArgument } from '../src/local-server/index.js';
+import { parseToothConditions } from '../src/scan-report.js';
 import { createLaunchTelemetry } from '../src/telemetry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -537,8 +538,26 @@ ipcMain.handle('flow:run', async (event, params) => {
   const launchTelemetry =
     launchUrl && pendingLaunchTelemetry?.url?.trim() === launchUrl ? pendingLaunchTelemetry.telemetry : null;
 
+  // The tooth-condition picker sends its value as the same `<tooth>=<condition>` string the CLI's
+  // --tooth-condition takes, so both paths validate through the one parser in scan-report.js and
+  // no Map has to survive the IPC hop. The UI can only produce valid pairs; parsing here is what
+  // makes that true rather than assumed.
+  let toothConditions = null;
   try {
-    const summary = await runFlow(reporter, { config, input, fixturesDir: FIXTURES_DIR, launchTelemetry });
+    const picked = String(input?.toothConditionList ?? '').trim();
+    if (picked) toothConditions = parseToothConditions(picked, 'tooth conditions');
+  } catch (err) {
+    send('fail', { msg: err.message });
+    return { ok: false, error: err.message };
+  }
+
+  try {
+    const summary = await runFlow(reporter, {
+      config,
+      input: { ...input, toothConditions },
+      fixturesDir: FIXTURES_DIR,
+      launchTelemetry,
+    });
     return { ok: true, summary };
   } catch (err) {
     send('fail', { msg: err.message });

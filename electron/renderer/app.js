@@ -112,6 +112,131 @@ function setProgress({ label, sent, total, pct }) {
   $('progress-bar').style.width = batchPct + '%';
 }
 
+// ---------------- tooth conditions ----------------
+// What each segmented tooth IS — the closed vocabulary src/scan-report.js validates against, and
+// what the CLI takes as `--tooth-condition 8=prepared,9=restored`. This chart is the UI for that
+// flag. Numbers are ALWAYS universal here, whatever the payload's toothSystem asks the doctor to
+// be shown; the report never sends the other system.
+const TOOTH_CONDITIONS = ['prepared', 'missing', 'restored'];
+
+// Universal numbering: 1-16 is the upper arch, 17-32 the lower. The lower row runs 32 -> 17 so
+// each tooth sits under the one it occludes with, the way a chart is drawn.
+const UPPER_ROW = Array.from({ length: 16 }, (_, i) => i + 1);
+const LOWER_ROW = Array.from({ length: 16 }, (_, i) => 32 - i);
+
+const toothConditions = new Map(); // universal tooth number -> condition
+let conditionBrush = TOOTH_CONDITIONS[0];
+// Which arches the next run captures, taken from the decoded payload: 1 = upper only, 2 = lower
+// only, null = full-mouth scan (both). buildScanReport() drops a condition on a tooth the session
+// never captured, so the chart dims those instead of letting them look reported.
+let capturedFileType = null;
+
+const isUpperTooth = (tooth) => tooth <= 16;
+
+function toothIsCaptured(tooth) {
+  if (capturedFileType === 1) return isUpperTooth(tooth);
+  if (capturedFileType === 2) return !isUpperTooth(tooth);
+  return true;
+}
+
+function buildConditionBrushes() {
+  const seg = $('cond-seg');
+  seg.innerHTML = '';
+  for (const condition of TOOTH_CONDITIONS) {
+    const btn = el('button', 'seg-btn');
+    btn.type = 'button';
+    btn.setAttribute('role', 'radio');
+    btn.dataset.cond = condition;
+    btn.appendChild(el('i', 'cond-dot'));
+    btn.appendChild(el('span', null, condition[0].toUpperCase() + condition.slice(1)));
+    seg.appendChild(btn);
+  }
+  setConditionBrush(conditionBrush);
+}
+
+function buildTeethChart() {
+  const chart = $('teeth-chart');
+  chart.innerHTML = '';
+  for (const row of [UPPER_ROW, LOWER_ROW]) {
+    const rowEl = el('div', 'teeth-row');
+    for (const tooth of row) {
+      const btn = el('button', 'tooth', String(tooth));
+      btn.type = 'button';
+      btn.dataset.tooth = String(tooth);
+      btn.addEventListener('click', () => paintTooth(tooth));
+      rowEl.appendChild(btn);
+    }
+    chart.appendChild(rowEl);
+  }
+  renderTeeth();
+}
+
+// Clicking a tooth that already carries the selected condition clears it, so the one control both
+// sets and unsets and there is no separate eraser to find.
+function paintTooth(tooth) {
+  if (toothConditions.get(tooth) === conditionBrush) toothConditions.delete(tooth);
+  else toothConditions.set(tooth, conditionBrush);
+  renderTeeth();
+}
+
+function setConditionBrush(condition) {
+  conditionBrush = condition;
+  for (const btn of $('cond-seg').querySelectorAll('.seg-btn[data-cond]')) {
+    const on = btn.dataset.cond === condition;
+    btn.classList.toggle('seg-active', on);
+    btn.setAttribute('aria-checked', String(on));
+  }
+}
+
+function renderTeeth() {
+  for (const btn of $('teeth-chart').querySelectorAll('.tooth')) {
+    const tooth = Number(btn.dataset.tooth);
+    const condition = toothConditions.get(tooth);
+    if (condition) btn.dataset.cond = condition;
+    else delete btn.dataset.cond;
+
+    const captured = toothIsCaptured(tooth);
+    btn.classList.toggle('out-of-scope', !captured);
+    btn.title =
+      `tooth ${tooth} (${isUpperTooth(tooth) ? 'upper' : 'lower'} arch, universal)` +
+      (condition ? ` - ${condition}` : '') +
+      (captured ? '' : ' - not in the arch this run captures, so the report drops it');
+  }
+  renderTeethSummary();
+}
+
+function renderTeethSummary() {
+  const out = $('teeth-summary');
+  out.innerHTML = '';
+  const pairs = [...toothConditions.entries()].sort((a, b) => a[0] - b[0]);
+
+  if (pairs.length === 0) {
+    out.className = 'teeth-summary hint';
+    out.textContent = 'no condition set — every segmented tooth is reported with condition null';
+    return;
+  }
+
+  // Show the value that reproduces this run on the CLI: the chart is a nicer way to type the flag,
+  // not a different feature.
+  out.className = 'teeth-summary';
+  out.appendChild(el('code', null, '--tooth-condition ' + toothConditionList()));
+
+  const dropped = pairs.filter(([tooth]) => !toothIsCaptured(tooth)).map(([tooth]) => tooth);
+  if (dropped.length > 0) {
+    out.appendChild(
+      el('div', 'teeth-warn', `${dropped.join(', ')}: not in the captured arch — dropped from the report`)
+    );
+  }
+}
+
+/** The picker's value in the `<tooth>=<condition>` form the flow's parser takes. */
+function toothConditionList() {
+  return [...toothConditions.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([tooth, condition]) => `${tooth}=${condition}`)
+    .join(',');
+}
+
 // ---------------- payload panel ----------------
 function renderPayload({ decoded, fields }) {
   $('payload-empty').hidden = true;
@@ -133,6 +258,11 @@ function renderPayload({ decoded, fields }) {
     tb.appendChild(tr);
   }
   $('payload-json').textContent = JSON.stringify(decoded, null, 2);
+
+  // A payload naming a fileType is a single-arch rescan, so only that arch's teeth can carry a
+  // reported condition — the chart follows the payload rather than letting the other row lie.
+  capturedFileType = fields.fileType ?? null;
+  renderTeeth();
 }
 
 // ---------------- transactions ----------------
@@ -308,6 +438,9 @@ function currentInput() {
     demoRefresh: $('in-refresh').checked,
     upperFileOverride: $('in-file-upper').value.trim() || null,
     lowerFileOverride: $('in-file-lower').value.trim() || null,
+    // Sent as the CLI's own `<tooth>=<condition>` string, not as a Map: the main process parses it
+    // with the same parseToothConditions() the CLI uses, so both paths validate in one place.
+    toothConditionList: toothConditionList() || null,
   };
   if (mode === 'url') return { ...common, launchUrl: $('in-launch-url').value.trim() };
   return { ...common, code: $('in-code').value.trim(), treatmentId: $('in-treatment').value.trim() || null };
@@ -367,8 +500,28 @@ $('mode-url').addEventListener('click', () => setMode('url'));
 $('mode-manual').addEventListener('click', () => setMode('manual'));
 $('btn-run').addEventListener('click', runFlow);
 $('btn-decode').addEventListener('click', decodeOnly);
-$('btn-clear').addEventListener('click', () => { resetRunState(); logEl.innerHTML = ''; $('payload-body').hidden = true; $('payload-empty').hidden = false; });
+$('btn-clear').addEventListener('click', () => {
+  resetRunState();
+  logEl.innerHTML = '';
+  $('payload-body').hidden = true;
+  $('payload-empty').hidden = false;
+  // The decoded payload is gone from the screen, so nothing says which arches a run would capture
+  // any more. The picked conditions stay: like the config fields, they are input, not run state.
+  capturedFileType = null;
+  renderTeeth();
+});
+$('cond-seg').addEventListener('click', (event) => {
+  const btn = event.target.closest('.seg-btn[data-cond]');
+  if (btn) setConditionBrush(btn.dataset.cond);
+});
+$('btn-teeth-clear').addEventListener('click', () => {
+  toothConditions.clear();
+  renderTeeth();
+});
 $('btn-log-clear').addEventListener('click', () => (logEl.innerHTML = ''));
+
+buildConditionBrushes();
+buildTeethChart();
 
 function wireSecretToggle(buttonId, inputId) {
   $(buttonId).addEventListener('click', () => {
