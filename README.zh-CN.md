@@ -166,7 +166,7 @@ Content-Type: application/json
 
 { "fileName": "upper.stl", "fileSize": 3083734, "treatmentId": "<treatment-id>",
   "scanJobId": "<启动 payload 中的 case.ID>",
-  "treatmentFileType": 1, "arch": 1, "externalScanFileType": "UpperArch",
+  "treatmentFileType": 1, "arch": 1, "externalScanFileType": "Upper",
   "externalCaseId": "<external-case-id>" }
 ```
 
@@ -185,7 +185,7 @@ Content-Length: <fileSize>
 - `scanJobId`:即启动 payload 中的 `case.ID`,标识该文件所属的扫描会话。**每次上传都要带上** ——
   SprintRay 靠它跟踪会话进度;对于不携带 treatment 的拉起,这也是其上传能被记录下来的唯一途径。
   `treatmentId` 仍各司其职,负责把文件绑定到 treatment,两者并存。
-- `externalScanFileType`:**每次上传必传。** 即**你自己对这个文件的命名** —— `UpperArch`、`LowerJaw`、
+- `externalScanFileType`:**每次上传必传。** 即**你自己对这个文件的命名** —— `Upper`、`LowerJaw`、
   `BiteScan`,你的应用本来怎么叫就怎么传,不必迁就 SprintRay 的编号。SprintRay 首次见到某个名字时,
   会把它登记在你这个集成名下;之后由 SprintRay 管理员一次性把它映射到对应的 SprintRay 文件类型和/或
   indication,从此以该名字上传的文件,其文件类型就**由该映射决定**,优先于你传的 `treatmentFileType`。
@@ -574,7 +574,10 @@ npm run app -- --env-file=.env.qa        # 也可以用 SCANPRO_ENV_FILE=.env.qa
 
 - **左侧 —— 配置与输入。** 网关 origin、API key、client id/secret、URL scheme 会从 `.env` 预填(可按次修改)。
   粘贴 `openScanPro://<base64>` **启动 URL**,或切到 **Manual code** 用显式 `code` + treatment id 运行;
-  还可分别为上颌、下颌指定自定义扫描文件,并勾选是否额外走 token 刷新步骤。**Tooth conditions**
+  **Upload** 区按颌位分开:可选地指定自定义扫描文件,以及该文件上传时使用的 `externalScanFileType` ——
+  预填为 `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER`(否则 `Upper` / `Lower`),下拉建议是 ScanPro 自己的
+  扫描类型名(`UpperPreOp`、`UpperAd`、`FreeScan` 等),也接受任意其他名字,便于观察一个名字如何被登记、
+  映射后又如何决定文件类型。需要的话勾选额外走 token 刷新步骤。**Tooth conditions**
   即 `--tooth-condition` 的牙位图版本:先选一种 condition,再点属于它的牙齿(再点一次取消),
   图下方那行给出等价的命令行参数值,可直接复制到 CLI 复现同一次运行。牙位号一律为 universal
   编号(上排 `1`&ndash;`16`,下排 `32`&ndash;`17`);解析出 payload 后,本次不采集的那一颌会置灰
@@ -630,7 +633,7 @@ node --env-file=.env src/index.js --code <code> --base-url <origin> --treatment-
 | `--segmented-teeth 8,9` | 上报并上传的牙位 —— 传 `none` 表示一颗都不报(默认:所报颌位中除缺失牙以外的全部牙位) |
 | `--tooth-condition 8=prepared,9=restored` | 逐牙上报的 `condition` —— `prepared` / `missing` / `restored`(默认:每颗牙都是 `null`) |
 | `--no-metadata` | 什么都不报:结束调用只带 id,与这套契约之前写好的客户端行为一致 |
-| `--upper-scan-type <n>` / `--lower-scan-type <n>` | 各颌上传时发送的 `externalScanFileType`(默认取 `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER`,否则 `UpperArch` / `LowerArch`) |
+| `--upper-scan-type <n>` / `--lower-scan-type <n>` | 各颌上传时发送的 `externalScanFileType`(默认取 `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER`,否则 `Upper` / `Lower`) |
 | `--tooth-file <p>` / `--gingiva-file <p>` | PUT 到每个返回链接的网格文件(默认 `fixtures/tooth.ply` / `fixtures/gingiva.ply`) |
 
 因此,一次不带任何参数的整口运行会上报双颌、32 颗分割牙、无缺失牙 —— 换回 34 个预签名链接,

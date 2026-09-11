@@ -15,7 +15,28 @@ import { ArchType } from './payload.js';
 // The provider's own vocabulary, not a SprintRay enum. Unseen names are registered against the
 // integration on first sight and an admin maps them once; keep the spelling stable.
 export const DEFAULT_SCAN_MODE = 'quickScan';
-export const DEFAULT_SCAN_FILE_TYPES = { upper: 'UpperArch', lower: 'LowerArch' };
+export const DEFAULT_SCAN_FILE_TYPES = { upper: 'Upper', lower: 'Lower' };
+
+// The scan types ScanPro itself writes — one name per kind of output file, as listed in the
+// ScanPro scan-file-type table of the integration docs (`Upper` is upper.ply, `UpperAd` is
+// upper_ad<n>.ply, `FreeScan` any renamable extra scan, and so on). The developer skin
+// offers them as suggestions for the per-file externalScanFileType; the vocabulary stays free,
+// so any other name is accepted just the same.
+export const SCANPRO_SCAN_FILE_TYPES = Object.freeze([
+  'Upper', 'Lower',
+  'UpperPreOp', 'LowerPreOp',
+  'UpperImplant', 'LowerImplant',
+  'UpperProsthesis360', 'LowerProsthesis360',
+  'UpperProsthesisIntraoral', 'LowerProsthesisIntraoral',
+  'UpperGingiva', 'LowerGingiva',
+  'UpperScanbody', 'LowerScanbody',
+  'FreeScan',
+  'LowerJawMotion', 'MarginLine', 'Snapshot', 'IOImage', 'QuadrantSnapshot',
+  'UpperAd', 'LowerAd',
+  'UpperPreOpAd', 'LowerPreOpAd',
+  'UpperImplantAd', 'LowerImplantAd',
+  'UpperProsthesis360Ad', 'LowerProsthesis360Ad',
+]);
 
 // The state a segmented tooth is in. Unlike scanMode this IS a fixed SprintRay vocabulary —
 // a closed string enum, and the only values `condition` accepts.

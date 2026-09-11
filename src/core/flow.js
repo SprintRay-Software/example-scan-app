@@ -35,8 +35,9 @@ export const DEFAULT_TOKEN_PATH = '/integration/device-login-token';
 /**
  * The scan vocabulary this run uses: the provider's own names for its scan file types and its
  * scan mode. They belong to the integration, not to a run, so they come from config (.env) with
- * a per-run CLI override on top and a built-in default under both — the Electron UI has no field
- * for them, and an unset one must still produce a working call.
+ * a per-run override on top — the CLI's --upper-scan-type / --lower-scan-type, or the developer
+ * skin's per-file scan-type field — and a built-in default under both, so an unset one still
+ * produces a working call.
  */
 function scanVocabulary(config, input) {
   return {

@@ -78,8 +78,8 @@ Options:
                            8=prepared,9=restored (prepared | missing | restored;
                            default: no condition on any tooth)
     --no-metadata          report nothing: finish the session the pre-metadata way
-    --upper-scan-type <n>  externalScanFileType for the upper file (default UpperArch)
-    --lower-scan-type <n>  externalScanFileType for the lower file (default LowerArch)
+    --upper-scan-type <n>  externalScanFileType for the upper file (default Upper)
+    --lower-scan-type <n>  externalScanFileType for the lower file (default Lower)
     --tooth-file <p>       mesh PUT for each segmented tooth (default fixtures/tooth.ply)
     --gingiva-file <p>     mesh PUT for each gingiva link (default fixtures/gingiva.ply)
 
