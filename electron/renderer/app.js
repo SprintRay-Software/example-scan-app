@@ -438,6 +438,10 @@ function currentInput() {
     demoRefresh: $('in-refresh').checked,
     upperFileOverride: $('in-file-upper').value.trim() || null,
     lowerFileOverride: $('in-file-lower').value.trim() || null,
+    // This app's own name for each file (externalScanFileType). Null = not overridden, so the
+    // main process falls back to the .env's names and then the built-in ones.
+    upperScanFileType: $('in-scan-type-upper').value.trim() || null,
+    lowerScanFileType: $('in-scan-type-lower').value.trim() || null,
     // Sent as the CLI's own `<tooth>=<condition>` string, not as a Map: the main process parses it
     // with the same parseToothConditions() the CLI uses, so both paths validate in one place.
     toothConditionList: toothConditionList() || null,
@@ -600,6 +604,21 @@ function updateServerChip(state) {
   $('env-note').textContent = d.envFileFound
     ? `prefilled from ${envName}`
     : `no ${envName} found — enter values`;
+
+  // Per-file scan type: prefilled with what an untouched run sends, so the name on screen is the
+  // name on the wire; the datalist offers ScanPro's own names, typing anything else is fine.
+  for (const arch of ['upper', 'lower']) {
+    const field = $(`in-scan-type-${arch}`);
+    field.value = d.scanFileTypes[arch];
+    field.placeholder = d.scanFileTypes[arch];
+  }
+  const options = $('scan-file-type-options');
+  options.innerHTML = '';
+  for (const name of d.scanFileTypeOptions || []) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    options.appendChild(opt);
+  }
 
   const s = await window.scanpro.getSchemeStatus();
   updateSchemeChip(s);

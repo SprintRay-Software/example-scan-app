@@ -180,7 +180,7 @@ Content-Type: application/json
 
 { "fileName": "upper.stl", "fileSize": 3083734, "treatmentId": "<treatment-id>",
   "scanJobId": "<case.ID from the launch payload>",
-  "treatmentFileType": 1, "arch": 1, "externalScanFileType": "UpperArch",
+  "treatmentFileType": 1, "arch": 1, "externalScanFileType": "Upper",
   "externalCaseId": "<external-case-id>" }
 ```
 
@@ -201,7 +201,7 @@ Content-Length: <fileSize>
   only way a launch that carries no treatment gets its uploads recorded at all. `treatmentId` keeps
   its own job of binding the file to the treatment; the two coexist.
 - `externalScanFileType`: **required on every upload.** Your own name for what this file is —
-  `UpperArch`, `LowerJaw`, `BiteScan`, whatever your app already calls it; you do not have to adopt
+  `Upper`, `LowerJaw`, `BiteScan`, whatever your app already calls it; you do not have to adopt
   SprintRay's numbering. A name SprintRay has not seen before is registered against your integration
   on first sight, and a SprintRay admin maps it once to the matching SprintRay file type and/or
   indication — from then on that mapping is **what decides the type** of every file uploaded under
@@ -618,8 +618,12 @@ three parts:
 
 - **Left — Configuration & input.** Gateway origin, API key, client id/secret, and URL scheme are prefilled
   from `.env` (editable per run). Paste a `openScanPro://<base64>` **launch URL**, or switch to
-  **Manual code** to run with an explicit `code` + treatment id. Optionally pick a custom scan file
-  for the upper and lower arch separately, and toggle the token-refresh step. **Tooth conditions**
+  **Manual code** to run with an explicit `code` + treatment id. **Upload** takes each arch
+  separately: optionally a custom scan file, and the `externalScanFileType` the file goes up under —
+  prefilled with `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER` (else `Upper` / `Lower`), with ScanPro's
+  own scan-type names (`UpperPreOp`, `UpperAd`, `FreeScan`, …) offered as suggestions and any other
+  name accepted, so you can watch a name get registered and, once mapped, decide the file's type.
+  Toggle the token-refresh step if you want it. **Tooth conditions**
   is the `--tooth-condition` flag as a dental chart: pick a condition, click the teeth in it (click
   again to clear), and the line under the chart shows the flag value that reproduces the same run
   on the CLI. Numbers are universal (top row `1`&ndash;`16`, bottom `32`&ndash;`17`); once a payload
@@ -682,7 +686,7 @@ of it can be overridden:
 | `--segmented-teeth 8,9` | the teeth reported and uploaded — `none` reports zero (default: every tooth of the captured arches that is not missing) |
 | `--tooth-condition 8=prepared,9=restored` | the `condition` reported per tooth — `prepared` / `missing` / `restored` (default: `null` on every tooth) |
 | `--no-metadata` | report nothing at all: the finish call sends the id alone, the way a client written before this contract does |
-| `--upper-scan-type <n>` / `--lower-scan-type <n>` | the `externalScanFileType` sent for each arch (default `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER`, else `UpperArch` / `LowerArch`) |
+| `--upper-scan-type <n>` / `--lower-scan-type <n>` | the `externalScanFileType` sent for each arch (default `$SCANPRO_SCAN_FILE_TYPE_UPPER` / `_LOWER`, else `Upper` / `Lower`) |
 | `--tooth-file <p>` / `--gingiva-file <p>` | the mesh PUT to each returned link (default `fixtures/tooth.ply` / `fixtures/gingiva.ply`) |
 
 A full-mouth run with no flags therefore reports both arches, 32 segmented teeth and no missing

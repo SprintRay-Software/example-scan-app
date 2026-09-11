@@ -103,6 +103,9 @@ input[type="text"], input[type="password"], textarea {
 input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .secret-row { display: flex; gap: 6px; }
 .secret-row input { flex: 1 1 auto; }
+.scan-type-row { display: flex; align-items: center; gap: 6px; }
+.scan-type-row em { color: var(--text-faint); font-style: normal; font-size: 11px; white-space: nowrap; }
+.scan-type-row input { flex: 1 1 auto; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 12px; }
 .check input { accent-color: var(--accent); }
 

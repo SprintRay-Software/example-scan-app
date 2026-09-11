@@ -345,21 +345,39 @@
 
         <section class="panel">
           <div class="panel-head"><h2>Upload</h2></div>
-          <label class="field">
+          <!-- One block per arch: the file that goes up, and this app's own name for what it is
+               (externalScanFileType). The name list is ScanPro's; the field takes any name. -->
+          <div class="field">
             <span>Upper scan <em>(FileType 1)</em></span>
             <span class="secret-row">
               <input id="in-file-upper" type="text" spellcheck="false" placeholder="default: fixtures/upper.stl" readonly />
               <button id="btn-pick-upper" class="btn btn-ghost btn-sm" type="button">Browse</button>
             </span>
-          </label>
-          <label class="field">
+            <label class="scan-type-row">
+              <em>externalScanFileType</em>
+              <input id="in-scan-type-upper" type="text" list="scan-file-type-options" spellcheck="false" autocomplete="off" placeholder="Upper" />
+            </label>
+          </div>
+          <div class="field">
             <span>Lower scan <em>(FileType 2)</em></span>
             <span class="secret-row">
               <input id="in-file-lower" type="text" spellcheck="false" placeholder="default: fixtures/lower.stl" readonly />
               <button id="btn-pick-lower" class="btn btn-ghost btn-sm" type="button">Browse</button>
             </span>
-            <span class="hint">Empty = use the bundled fixture. A payload with no <code>fileType</code> is a full-mouth scan and uploads both; a payload naming <code>fileType</code> uploads only that arch.</span>
-          </label>
+            <label class="scan-type-row">
+              <em>externalScanFileType</em>
+              <input id="in-scan-type-lower" type="text" list="scan-file-type-options" spellcheck="false" autocomplete="off" placeholder="Lower" />
+            </label>
+            <datalist id="scan-file-type-options"></datalist>
+            <span class="hint">
+              File empty = use the bundled fixture. A payload with no <code>fileType</code> is a
+              full-mouth scan and uploads both; a payload naming <code>fileType</code> uploads only
+              that arch. The scan type is <em>your</em> name for the file &mdash; what a SprintRay
+              admin maps once in Integration Config; the suggestions are ScanPro's own names, any
+              name is accepted. Empty = <code>$SCANPRO_SCAN_FILE_TYPE_UPPER</code> /
+              <code>_LOWER</code>, else <code>Upper</code> / <code>Lower</code>.
+            </span>
+          </div>
           <label class="check">
             <input id="in-refresh" type="checkbox" />
             <span>Also exercise the token-refresh endpoint</span>

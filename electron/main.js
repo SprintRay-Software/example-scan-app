@@ -21,7 +21,7 @@ import { normalizeBaseUrl, loadLocalServerConfig } from '../src/config.js';
 import { runFlow, decodeLaunch } from '../src/core/flow.js';
 import { createReporter } from '../src/core/reporter.js';
 import { startScanProLocalServer, summarizeArgument } from '../src/local-server/index.js';
-import { parseToothConditions } from '../src/scan-report.js';
+import { parseToothConditions, DEFAULT_SCAN_FILE_TYPES, SCANPRO_SCAN_FILE_TYPES } from '../src/scan-report.js';
 import { createLaunchTelemetry } from '../src/telemetry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -121,6 +121,14 @@ function defaults() {
     envFileFound: existsSync(ENV_FILE),
     envFilePath: ENV_FILE,
     fixtures: { upper: join(FIXTURES_DIR, 'upper.stl'), lower: join(FIXTURES_DIR, 'lower.stl') },
+    // What each arch's upload is called when the developer skin's per-file field is left alone:
+    // the .env's names, else this example's own. The skin prefills the field with these so the
+    // name that goes on the wire is the one on screen.
+    scanFileTypes: {
+      upper: (ENV.SCANPRO_SCAN_FILE_TYPE_UPPER || '').trim() || DEFAULT_SCAN_FILE_TYPES.upper,
+      lower: (ENV.SCANPRO_SCAN_FILE_TYPE_LOWER || '').trim() || DEFAULT_SCAN_FILE_TYPES.lower,
+    },
+    scanFileTypeOptions: SCANPRO_SCAN_FILE_TYPES,
   };
 }
 
@@ -501,9 +509,10 @@ ipcMain.handle('flow:run', async (event, params) => {
     apiKey: String(rawConfig.apiKey || '').trim(),
     clientId: String(rawConfig.clientId || '').trim(),
     clientSecret: String(rawConfig.clientSecret || '').trim(),
-    // The integration's scan vocabulary comes from the .env, not from the renderer: it belongs
-    // to the integration rather than to a run, so there is no UI field for it. Unset is fine —
-    // the flow falls back to this example's own default names.
+    // The integration's scan vocabulary comes from the .env: it belongs to the integration
+    // rather than to a run. The scan mode has no UI field; the per-file scan type does (the
+    // developer skin's Upload panel), and rides on `input` below as a per-run override on top
+    // of these. Unset is fine — the flow falls back to this example's own default names.
     scanMode: (ENV.SCANPRO_SCAN_MODE || '').trim() || undefined,
     scanFileTypes: {
       upper: (ENV.SCANPRO_SCAN_FILE_TYPE_UPPER || '').trim() || undefined,
@@ -551,10 +560,19 @@ ipcMain.handle('flow:run', async (event, params) => {
     return { ok: false, error: err.message };
   }
 
+  // The per-file scan type is free text; a blank field means "not overridden", so it must reach
+  // the flow as undefined for the .env / built-in fallback to apply, never as ''.
+  const scanTypeOverride = (value) => String(value ?? '').trim() || undefined;
+
   try {
     const summary = await runFlow(reporter, {
       config,
-      input: { ...input, toothConditions },
+      input: {
+        ...input,
+        toothConditions,
+        upperScanFileType: scanTypeOverride(input?.upperScanFileType),
+        lowerScanFileType: scanTypeOverride(input?.lowerScanFileType),
+      },
       fixturesDir: FIXTURES_DIR,
       launchTelemetry,
     });
