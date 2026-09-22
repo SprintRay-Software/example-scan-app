@@ -58,9 +58,9 @@ export async function getUploadLink(
   // which jaw the file captures; it is what the scan-finish metadata is split by, so a file with
   // no arch gets none of it.
   //
-  // No externalCaseId: it is the classic third-party upload's treatment key and has no role in a
-  // scan session — the session is scanJobId. Sending it would reproduce a payload shape no real
-  // scanner app sends and would hide defects in anything keying on it (SDS-12613).
+  // Nothing else goes in this body. The session is scanJobId and the case is treatmentId; fields
+  // belonging to SprintRay's other upload flows have no meaning here, and sending one produces a
+  // request shape no real scanner app makes.
   const model = {
     fileName,
     fileSize,

@@ -109,8 +109,7 @@ sequenceDiagram
     "tokenEndpoint": "/integration/device-login-token",
     "expiresIn": 600
   },
-  "treatmentId": "<treatment id>",
-  "externalCaseId": "<external case id>"
+  "treatmentId": "<treatment id>"
 }
 ```
 
@@ -128,7 +127,6 @@ sequenceDiagram
 | `auth.tokenEndpoint` | token endpoint **path** — join onto the backend origin |
 | `auth.expiresIn` | code lifetime, seconds |
 | `treatmentId` | treatment the uploaded scans attach to |
-| `externalCaseId` | optional case reference; **null from SprintRay's web app**, which sends none. **Do not send it on upload** — it has no role in a scan session, and `case.ID` is what identifies one. Its only use is the finish call's `caseId` fallback, and only if you were given a value and did not keep `case.ID` |
 
 > The `auth` and `treatmentId` fields are the SprintRay silent-auth + upload
 > context; the rest is the standard ScanPro launch payload.
@@ -219,12 +217,8 @@ Content-Length: <fileSize>
 - `arch` (optional): **`1` = upper, `2` = lower**. Which arch this file captures. Omit it for a file
   that captures no one arch — a bite scan, for instance. It is what the scan-finish metadata is
   split by, so a file with no `arch` gets no missing-teeth or segmented-teeth metadata attached.
-- **`externalCaseId` is not part of this call — do not send it.** It belongs to SprintRay's older
-  third-party upload, where a vendor's own case reference creates or finds a treatment; a scan
-  session has no use for it. `scanJobId` is the session, `treatmentId` is the treatment, and those
-  two are what SprintRay keys on. In particular, never echo `case.ID` back as `externalCaseId`:
-  nothing on SprintRay's side treats the two as the same key, so a client that does it behaves
-  unlike every other one and hides problems instead of surfacing them.
+- **Send nothing else.** `scanJobId` is the session and `treatmentId` is the case; those two are
+  what SprintRay keys on. Fields from other SprintRay upload flows have no meaning here.
 - Scan files are **STL**.
 - **Files are independent of each other.** A link request and its PUT concern one file only, and
   nothing in the contract orders them, so send as many at once as your uplink is happy with —
@@ -275,11 +269,6 @@ Content-Type: application/json
 - `id` is the resolution key, and it is simply the launch payload's `case.ID`. `scanJobId` is the
   original name for the same field and is **still accepted**, so a shipped app needs no change; `id`
   wins if both are sent.
-- `caseId` is accepted **instead** of the id only if you did not keep it, and only if you were given
-  one — it is the launch payload's top-level `externalCaseId`, which SprintRay's web app does not
-  send, so it is normally null and this example omits the field. It is a weaker key regardless: a
-  case id is not unique per launch, so SprintRay resolves the newest session carrying it, and it is
-  never the session id. Keep `case.ID`; it is always there.
 - **Every metadata field is optional.** A body of just `{ "id": "…" }` finishes the session exactly
   as it did before — report only what your scanner actually produces.
 - `scanMode`: **your own vocabulary** — `quickScan`, `restorative`, whatever your app calls it, the
@@ -639,7 +628,7 @@ three parts:
     URL → S3 PUT → finish the session → PUT the tooth/gingiva meshes), each showing live status and
     a one-line detail.
   - **Decoded launch payload** — the extracted fields (`code`, `tokenEndpoint`, `treatmentId`,
-    `externalCaseId`, `fileType`) plus the full decoded JSON. **Decode payload** shows this without
+    `scanJobId`, `fileType`) plus the full decoded JSON. **Decode payload** shows this without
     touching the network.
   - **HTTP transactions** — one expandable card per call, each with the **complete request** (method,
     URL, headers, body) and the **complete response** (status, headers, body, duration). Bodies are

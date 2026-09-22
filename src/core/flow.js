@@ -104,9 +104,6 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
   let code;
   let treatmentId;
   let scanJobId;
-  // The launch payload's optional case reference (ScanJob.CaseId), null for every SprintRay
-  // launch. Never sent on upload — its only use is the scan-finish call's `caseId` fallback.
-  let externalCaseId = null;
   // Requested TreatmentFiles type from the launch payload; null = full-mouth scan (both arches).
   let payloadFileType = null;
 
@@ -124,16 +121,12 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
     tokenPath = fields.tokenEndpoint;
     treatmentId = fields.treatmentId;
     scanJobId = fields.scanJobId;
-    externalCaseId = fields.externalCaseId;
     payloadFileType = fields.fileType;
 
     reporter.info(`code=${code}`);
     reporter.info(`tokenEndpoint (path)=${tokenPath}`);
     reporter.info(`treatmentId=${treatmentId}`);
     reporter.info(`scanJobId (case.ID)=${scanJobId}`);
-    reporter.info(
-      `externalCaseId=${externalCaseId ?? '(none)'} — not sent on upload; the finish call's caseId fallback only`
-    );
     reporter.info(
       payloadFileType === null
         ? 'launch payload fileType = null (full-mouth scan; upper AND lower will be uploaded)'
@@ -304,7 +297,6 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
         apiKey: config.apiKey,
         accessToken: tokens.access_token,
         scanJobId,
-        externalCaseId,
         report,
       });
     } catch (err) {
