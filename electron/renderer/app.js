@@ -248,7 +248,6 @@ function renderPayload({ decoded, fields }) {
     ['auth.tokenEndpoint', fields.tokenEndpoint],
     ['treatmentId', fields.treatmentId],
     ['scanJobId (case.ID)', fields.scanJobId],
-    ['externalCaseId (finish-call fallback only)', fields.externalCaseId],
     ['fileType', fileTypeLabel(fields.fileType)],
   ];
   for (const [k, v] of rows) {

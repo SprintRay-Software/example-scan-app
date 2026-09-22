@@ -44,15 +44,12 @@ function describeLinks(job) {
 /**
  * POST {baseUrl}/integration/scan-job/complete
  *   Authorization: Bearer <accessToken>   x-api-key: <apiKey>
- *   { id, caseId?, scanMode?, hasUpper?, hasLower?, missingTeeth?,
+ *   { id, scanMode?, hasUpper?, hasLower?, missingTeeth?,
  *     segmentedTeeth?: { toothNumber, filename?, confidence?, condition? }[] }
  *
  * `id` is the launch payload's `case.ID`. (`scanJobId` is the original name for the same field
- * and is still accepted, so a shipped app needs no change; `id` wins when both are sent.)
- * `caseId` is only a fallback for a client that did not keep the id — it is not unique per
- * launch, so SprintRay resolves the newest session carrying it. It is the launch payload's
- * top-level `externalCaseId`, which SprintRay's web app never sends, so it is normally absent
- * here; it is never the session id, and it is never sent on upload (SDS-12613).
+ * and is still accepted, so a shipped app needs no change; `id` wins when both are sent.) This
+ * app always keeps `case.ID`, so it identifies the session by `id` and nothing else.
  *
  * Every metadata field is optional: pass no `report` and this is the pre-metadata call, which
  * still closes the session out. Idempotent either way — a retry re-issues links to the SAME S3
@@ -64,7 +61,7 @@ function describeLinks(job) {
  */
 export async function completeScanJob(
   reporter,
-  { baseUrl, apiKey, accessToken, scanJobId, externalCaseId, report = null }
+  { baseUrl, apiKey, accessToken, scanJobId, report = null }
 ) {
   const url = joinUrl(baseUrl, 'integration/scan-job/complete');
   const headers = {
@@ -73,13 +70,7 @@ export async function completeScanJob(
     Authorization: `Bearer ${accessToken}`,
     'x-api-key': apiKey,
   };
-  // Omit caseId rather than sending null: this app always kept case.ID, so the fallback has
-  // nothing to add, and a real launch carries no case reference to put there anyway.
-  const body = {
-    id: scanJobId,
-    ...(externalCaseId ? { caseId: externalCaseId } : {}),
-    ...(report ?? {}),
-  };
+  const body = { id: scanJobId, ...(report ?? {}) };
 
   reporter.phase('complete', 'active', `id=${scanJobId}`);
   reporter.step(
