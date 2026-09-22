@@ -110,7 +110,7 @@ sequenceDiagram
     "expiresIn": 600
   },
   "treatmentId": "<treatment id>",
-  "externalCaseId": "<external case id>"
+  "externalCaseId": null
 }
 ```
 
@@ -639,8 +639,8 @@ three parts:
     URL → S3 PUT → finish the session → PUT the tooth/gingiva meshes), each showing live status and
     a one-line detail.
   - **Decoded launch payload** — the extracted fields (`code`, `tokenEndpoint`, `treatmentId`,
-    `externalCaseId`, `fileType`) plus the full decoded JSON. **Decode payload** shows this without
-    touching the network.
+    `scanJobId`, `fileType`, and `externalCaseId` marked as the finish-call fallback it is) plus the
+    full decoded JSON. **Decode payload** shows this without touching the network.
   - **HTTP transactions** — one expandable card per call, each with the **complete request** (method,
     URL, headers, body) and the **complete response** (status, headers, body, duration). Bodies are
     pretty-printed and copyable; the S3 PUT body is shown as `<binary N bytes>`.

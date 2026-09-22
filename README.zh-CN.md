@@ -99,7 +99,7 @@ sequenceDiagram
     "expiresIn": 600
   },
   "treatmentId": "<treatment id>",
-  "externalCaseId": "<external case id>"
+  "externalCaseId": null
 }
 ```
 
@@ -590,8 +590,9 @@ npm run app -- --env-file=.env.qa        # 也可以用 SCANPRO_ENV_FILE=.env.qa
 - **右侧 —— 观测区。**
   - **Pipeline** —— 桌面应用侧的步骤按序展示(解析 → 换 token → 可选刷新 → 预签名 URL → S3 PUT →
     结束会话 → PUT 牙齿/牙龈网格),每步显示实时状态与一行摘要。
-  - **Decoded launch payload** —— 解析出的字段(`code`、`tokenEndpoint`、`treatmentId`、
-    `externalCaseId`、`fileType`)以及完整的解码 JSON;**Decode payload** 可在不发起网络请求的情况下预览。
+  - **Decoded launch payload** —— 解析出的字段(`code`、`tokenEndpoint`、`treatmentId`、`scanJobId`、
+    `fileType`,以及标注为「仅结束会话调用兜底」的 `externalCaseId`)以及完整的解码 JSON;
+    **Decode payload** 可在不发起网络请求的情况下预览。
   - **HTTP transactions** —— 每次调用一张可展开的卡片,包含**完整 request**(method、URL、headers、body)
     与**完整 response**(status、headers、body、耗时);body 会格式化并可复制,S3 PUT 的 body 显示为
     `<binary N bytes>`。
