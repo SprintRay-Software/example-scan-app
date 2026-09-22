@@ -117,9 +117,9 @@ sequenceDiagram
 | `auth.tokenEndpoint` | token 接口**路径** —— 拼接到后端 origin 之后 |
 | `auth.expiresIn` | code 有效期(秒) |
 | `treatmentId` | 上传的扫描文件要挂载到的 treatment |
-| `externalCaseId` | 可选的 case 引用;**SprintRay Web 端不下发,通常为 null**。有值时在上传里原样带回。它不是会话标识 —— 两次拉起可能带同一个值 —— 标识会话、可用于关联的只有 `case.ID` |
+| `externalCaseId` | 可选的 case 引用;**SprintRay Web 端不下发,通常为 null**。**上传时不要带它** —— 它在扫描会话里没有任何作用,标识会话的是 `case.ID`。它唯一的用途是结束会话调用里的 `caseId` 兜底,且仅限你当初拿到过值、又没保留 `case.ID` 的情况 |
 
-> `auth`、`treatmentId`、`externalCaseId` 是 SprintRay 的静默鉴权与上传上下文;
+> `auth`、`treatmentId` 是 SprintRay 的静默鉴权与上传上下文;
 > 其余为标准 ScanPro 启动 payload。
 
 ## 接口约定
@@ -166,8 +166,7 @@ Content-Type: application/json
 
 { "fileName": "upper.stl", "fileSize": 3083734, "treatmentId": "<treatment-id>",
   "scanJobId": "<启动 payload 中的 case.ID>",
-  "treatmentFileType": 1, "arch": 1, "externalScanFileType": "Upper",
-  "externalCaseId": "<external-case-id>" }
+  "treatmentFileType": 1, "arch": 1, "externalScanFileType": "Upper" }
 ```
 
 `200 →` 一个预签名上传 URL(JSON 字符串,或 `{ "url": "…" }`)
@@ -202,6 +201,11 @@ Content-Length: <fileSize>
 - `arch`(可选):**`1` = 上颌,`2` = 下颌**。这个文件扫的是哪一颌。没有具体颌位的文件(比如咬合扫描)
   可以不传。扫描结束调用上报的元数据正是按它来分配的,所以不传 `arch` 的文件不会被挂上缺失牙位与
   分割牙齿信息。
+- **`externalCaseId` 不属于这个调用,请不要传。** 它属于 SprintRay 更早的第三方上传 —— 在那里,
+  厂商自己的 case 引用用来创建或找到一个 treatment;扫描会话用不上它。会话是 `scanJobId`,
+  treatment 是 `treatmentId`,SprintRay 认的就是这两个。尤其不要把 `case.ID` 当作 `externalCaseId`
+  回传:SprintRay 侧并不把两者当同一个键,这么做会让你的客户端不同于其他任何一个,把问题掩盖起来
+  而不是暴露出来。
 - 扫描文件为 **STL** 格式。
 - **文件之间互不依赖。** 申请链接和 PUT 都只针对单个文件，契约里也没有规定它们的先后顺序，因此
   上行带宽允许的话可以同时发多个：整口会话的两颌一起发，下面的网格链接分批发。契约唯一强制的顺序
@@ -249,8 +253,9 @@ Content-Type: application/json
 - `id` 是定位会话的键,就是启动 payload 里的 `case.ID`。`scanJobId` 是同一个字段的旧名字,**仍然受支持**,
   已发布的应用无需改动;两者都传时以 `id` 为准。
 - 只有在你确实没有保留该 id、且当初拿到过 `externalCaseId` 时,才可以用 `caseId` **替代**它 ——
-  SprintRay Web 端并不下发它,通常为 null。而且它本身就是更弱的键:case id 并非每次拉起唯一,
-  SprintRay 会取携带该值的最新会话。请保留 `case.ID`,它一定有值。
+  它就是启动 payload 顶层的 `externalCaseId`,SprintRay Web 端并不下发,通常为 null,本示例也因此
+  不传这个字段。而且它本身就是更弱的键:case id 并非每次拉起唯一,SprintRay 会取携带该值的最新会话,
+  它也从来不是会话 id。请保留 `case.ID`,它一定有值。
 - **所有元数据字段都是可选的。** 只传 `{ "id": "…" }` 的请求体,与此前完全一样地结束会话 ——
   你的扫描仪实际产出什么就报什么。
 - `scanMode`:**用你自己的词汇** —— `quickScan`、`restorative`,你的应用怎么叫就怎么传,与上传调用里的
