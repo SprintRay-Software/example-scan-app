@@ -104,7 +104,9 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
   let code;
   let treatmentId;
   let scanJobId;
-  let externalCaseId;
+  // The launch payload's optional case reference (ScanJob.CaseId), null for every SprintRay
+  // launch. Never sent on upload — its only use is the scan-finish call's `caseId` fallback.
+  let externalCaseId = null;
   // Requested TreatmentFiles type from the launch payload; null = full-mouth scan (both arches).
   let payloadFileType = null;
 
@@ -129,7 +131,9 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
     reporter.info(`tokenEndpoint (path)=${tokenPath}`);
     reporter.info(`treatmentId=${treatmentId}`);
     reporter.info(`scanJobId (case.ID)=${scanJobId}`);
-    reporter.info(`externalCaseId=${externalCaseId}`);
+    reporter.info(
+      `externalCaseId=${externalCaseId ?? '(none)'} — not sent on upload; the finish call's caseId fallback only`
+    );
     reporter.info(
       payloadFileType === null
         ? 'launch payload fileType = null (full-mouth scan; upper AND lower will be uploaded)'
@@ -143,10 +147,9 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
     if (input.baseUrlOverride) baseUrl = normalizeBaseUrl(input.baseUrlOverride);
     tokenPath = DEFAULT_TOKEN_PATH;
     treatmentId = input.treatmentId ?? null;
-    // No launch payload means no real scan session: this dev path reuses the treatment id as the
-    // case reference and has no case.ID at all, which is why it skips the scan-finish call below.
+    // No launch payload means no real scan session: this dev path has no case.ID at all, which is
+    // why it skips the scan-finish call below. The upload binds to the treatment by treatmentId.
     scanJobId = null;
-    externalCaseId = input.treatmentId ?? null;
     reporter.info(`code=${code}`);
     reporter.info(`baseUrl=${baseUrl}`);
     reporter.info(`treatmentId=${treatmentId ?? '(none)'}`);
@@ -256,7 +259,6 @@ export async function runFlow(reporter, { config, input, fixturesDir, launchTele
         fileTypeSource: upload.fileTypeSource,
         externalScanFileType: upload.externalScanFileType,
         arch: upload.arch,
-        externalCaseId,
       }),
     (outcome, { upload, buffered }) => {
       buffered.flush();

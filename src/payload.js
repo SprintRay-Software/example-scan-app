@@ -90,10 +90,13 @@ export function parseLaunchUrl(url) {
  * - treatmentId          -> top-level treatment id (the upload target)
  * - scanJobId            -> `case.ID`: the scan session of THIS launch. Sent on every upload
  *                           and it is what the scan-finish call keys on.
- * - externalCaseId       -> top-level external case id used on upload (the correlation key of
- *                           SprintRay's upload event). A different thing from the scan session:
- *                           the fall back to case.ID is only for payloads predating the
- *                           dedicated field.
+ * - externalCaseId       -> the launch payload's optional case reference (ScanJob.CaseId). It is
+ *                           NOT the scan session and has no part in one: SprintRay's web app sends
+ *                           none, so it is normally null, and it is never echoed on upload. Its
+ *                           only use is the scan-finish call's `caseId` fallback. Do not fall back
+ *                           to case.ID here — echoing the session id into this field reproduces a
+ *                           pre-SDS-12363 payload shape no real app sends, and masks any defect in
+ *                           code that keys on it (SDS-12613).
  * - fileType             -> requested TreatmentFiles type for the upload body; null for a
  *                           full (both-jaw) scan, in which case the per-file default is used.
  */
@@ -108,13 +111,7 @@ export function extractFields(payload) {
   const code = auth.code ?? auth.Code;
   const tokenEndpoint = auth.tokenEndpoint ?? auth.TokenEndpoint;
 
-  const externalCaseId =
-    payload.externalCaseId ??
-    payload.ExternalCaseId ??
-    caseObj.ID ??
-    caseObj.Id ??
-    caseObj.id ??
-    null;
+  const externalCaseId = payload.externalCaseId ?? payload.ExternalCaseId ?? null;
 
   const scanJobId = caseObj.ID ?? caseObj.Id ?? caseObj.id ?? null;
 

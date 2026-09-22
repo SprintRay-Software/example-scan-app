@@ -39,7 +39,6 @@ export async function getUploadLink(
     fileTypeSource = 'fixture default',
     externalScanFileType,
     arch,
-    externalCaseId,
   }
 ) {
   const url = joinUrl(baseUrl, 'integration/file/upload');
@@ -58,6 +57,10 @@ export async function getUploadLink(
   // mapping — not the treatmentFileType below — decides the file's SprintRay type. `arch` says
   // which jaw the file captures; it is what the scan-finish metadata is split by, so a file with
   // no arch gets none of it.
+  //
+  // No externalCaseId: it is the classic third-party upload's treatment key and has no role in a
+  // scan session — the session is scanJobId. Sending it would reproduce a payload shape no real
+  // scanner app sends and would hide defects in anything keying on it (SDS-12613).
   const model = {
     fileName,
     fileSize,
@@ -66,7 +69,6 @@ export async function getUploadLink(
     treatmentFileType,
     externalScanFileType,
     arch,
-    externalCaseId,
   };
 
   // Highlight which FileType is being sent in the upload body and where it came from.
@@ -174,7 +176,6 @@ export async function uploadFixture(
     fileTypeSource = 'fixture default',
     externalScanFileType,
     arch,
-    externalCaseId,
   }
 ) {
   const bytes = await readFile(filePath);
@@ -192,7 +193,6 @@ export async function uploadFixture(
     fileTypeSource,
     externalScanFileType,
     arch,
-    externalCaseId,
   });
 
   await putFile(reporter, presignedUrl, bytes, fileName);
