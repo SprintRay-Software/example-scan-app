@@ -352,3 +352,59 @@ export function createLaunchTelemetry({ env, defaults = {}, log = () => {} } = {
 
   return launch;
 }
+
+/**
+ * Report one event from the resident service itself — the OTA install events of
+ * ScanPro_OTA_API.md §4.6 (`app.exited { reason: "update" }`, `app.updated`). Like
+ * local_server.port_unavailable these come from a machine-level service with nobody signed in,
+ * so there is no `userId`, and they are not `scanner.*` events, so there is no `scanner`.
+ *
+ * Never throws; with no endpoint or key it answers `{ skipped }` and sends nothing.
+ *
+ * @param {object} opts
+ * @param {string} opts.url
+ * @param {string} opts.apiKey
+ * @param {string} opts.appVersion     app.version of the batch — the version running when it is sent
+ * @param {string} opts.installPath
+ * @param {string} [opts.installationId]
+ * @param {string} opts.deviceId
+ * @param {string} [opts.build]
+ * @param {string} [opts.channel]
+ * @param {string} opts.eventName
+ * @param {object} opts.eventData
+ * @param {'info'|'warning'|'error'} [opts.severity]
+ */
+export async function reportServiceEvent({
+  url,
+  apiKey,
+  appVersion,
+  installPath,
+  installationId,
+  deviceId,
+  build,
+  channel,
+  eventName,
+  eventData,
+  severity = 'info',
+}) {
+  if (!telemetryPlatform()) {
+    return { ok: false, skipped: `os.platform enum has no value for ${platform()}` };
+  }
+
+  return sendTelemetryBatch({
+    url,
+    apiKey,
+    app: buildApp({ appVersion, installPath, installationId, build, channel }),
+    device: await buildDevice(deviceId),
+    events: [
+      {
+        eventId: randomUUID(),
+        eventName,
+        occurredAt: isoWithOffset(),
+        sessionId: SESSION_ID,
+        severity,
+        eventData,
+      },
+    ],
+  });
+}

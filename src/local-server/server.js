@@ -52,12 +52,29 @@ function listenOnce(server, port, host) {
   });
 }
 
-function closeServer(server) {
+function closeServer(server, { force = false } = {}) {
   return new Promise((resolve) => {
     server.close(() => resolve());
     // Idle keep-alive sockets would hold close() open; drop them right away.
     server.closeIdleConnections?.();
+    // A forced close is the process going away (the OTA restart): in-flight requests die with
+    // it, exactly what a caller polling a service that is being replaced runs into.
+    if (force) server.closeAllConnections?.();
   });
+}
+
+// The order ports are tried in: from `startPort` up to the end of the range, then wrapping round
+// to the start. With the default `startPort` (the range start) that is plain low-to-high, which
+// is what the real service does; a later start lets the simulator come back from an OTA restart
+// on another port, the way the real one does when its old port was taken in the meantime.
+function portOrder(portRangeStart, portRangeEnd, startPort) {
+  const first = Number.isInteger(startPort) && startPort >= portRangeStart && startPort <= portRangeEnd
+    ? startPort
+    : portRangeStart;
+  const ports = [];
+  for (let port = first; port <= portRangeEnd; port++) ports.push(port);
+  for (let port = portRangeStart; port < first; port++) ports.push(port);
+  return ports;
 }
 
 /**
@@ -68,6 +85,7 @@ function closeServer(server) {
  * @param {number} [opts.portRangeStart]
  * @param {number} [opts.portRangeEnd]
  * @param {string} [opts.host]  bind address; keep the loopback default in production
+ * @param {number} [opts.startPort]  first port to try (default: the range start); wraps round
  * @param {(port: number, code: string) => void} [opts.onPortBusy]  called per failed attempt
  * @returns {Promise<{ port: number, host: string, url: string, server: import('node:http').Server, close: () => Promise<void> }>}
  * @throws {PortRangeExhaustedError} when the whole range is taken
@@ -77,12 +95,13 @@ export async function startLocalServer({
   portRangeStart = DEFAULT_PORT_RANGE_START,
   portRangeEnd = DEFAULT_PORT_RANGE_END,
   host = LOOPBACK_HOST,
+  startPort,
   onPortBusy,
 }) {
   let attempted = 0;
   let lastErrorCode = null;
 
-  for (let port = portRangeStart; port <= portRangeEnd; port++) {
+  for (const port of portOrder(portRangeStart, portRangeEnd, startPort)) {
     const server = createServer(requestHandler);
     attempted += 1;
 
@@ -99,7 +118,7 @@ export async function startLocalServer({
       host,
       url: `http://${host}:${port}`,
       server,
-      close: () => closeServer(server),
+      close: (opts) => closeServer(server, opts),
     };
   }
 

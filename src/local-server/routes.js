@@ -1,8 +1,17 @@
-// The two endpoints of the ScanPro local HTTP service, exactly as specified in
-// ScanPro_Local_HTTP_Server.md §3:
+// The endpoints of the ScanPro local HTTP service, as specified in ScanPro_Local_HTTP_Server.md §3
+// and, for the app update, ScanPro_OTA_API.md §4:
 //
-//   GET  /scanpro/v1/status   -> { service, installed, running, version }
-//   POST /scanpro/v1/start    -> { argument: <base64 JSON> } -> { status, started }
+//   GET  /scanpro/v1/status         -> { service, installed, running, version }
+//   POST /scanpro/v1/start          -> { argument: <base64 JSON> } -> { status, started }
+//   POST /scanpro/v1/update         -> { action, target, package } -> { action, target, phase, fromVersion, toVersion }
+//   GET  /scanpro/v1/update/status  -> { action, target, phase, percent, fromVersion, toVersion, startedAt, updatedAt, error }
+//
+// Plus, only when explicitly enabled, the simulator's own control route — NOT part of any
+// contract, see handleSimControl below:
+//
+//   GET  /scanpro/v1/_sim          -> switches + OTA snapshot
+//   POST /scanpro/v1/_sim          -> change switches
+//   POST /scanpro/v1/_sim/reset    -> forget every update, package and OTA-installed version
 //
 // The routes are pure HTTP plumbing: what "installed", "running" and "start" actually mean
 // is supplied by the caller as a `service` object, so the Electron app (where this example
@@ -18,6 +27,7 @@
 import { Buffer } from 'node:buffer';
 
 import { decodeArgument } from './argument.js';
+import { OtaRequestError } from './ota/errors.js';
 
 export const API_PREFIX = '/scanpro/v1';
 export const SERVICE_NAME = 'SprintRayScanService';
@@ -141,8 +151,11 @@ function readBody(req, limit = MAX_BODY_BYTES) {
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
-async function handleStatus(res, service, cors) {
-  const status = await service.getStatus();
+async function handleStatus(res, service, ota, cors) {
+  const base = await service.getStatus();
+  // With the OTA simulation on, /status reports what an update left installed and what the
+  // simulator switches say about ScanPro — the Scan tab's success check reads `version` here.
+  const status = ota ? ota.decorateStatus(base) : base;
   sendJson(
     res,
     200,
@@ -213,6 +226,74 @@ async function handleStart(req, res, service, cors, log) {
   }
 }
 
+// Read a JSON object body. Answers the error itself and resolves to undefined when it cannot.
+async function readJsonBody(req, res, cors, invalidCode) {
+  let raw;
+  try {
+    raw = await readBody(req);
+  } catch (err) {
+    if (err.code === 'PAYLOAD_TOO_LARGE') {
+      res.on('finish', () => req.socket?.destroy());
+      sendError(res, 413, 'PAYLOAD_TOO_LARGE', err.message, { ...cors, Connection: 'close' });
+    } else {
+      sendError(res, 400, invalidCode, `could not read the request body: ${err.message}`, cors);
+    }
+    return undefined;
+  }
+  try {
+    return raw.trim() === '' ? {} : JSON.parse(raw);
+  } catch (err) {
+    sendError(res, 400, invalidCode, `request body is not valid JSON: ${err.message}`, cors);
+    return undefined;
+  }
+}
+
+// POST /scanpro/v1/update (ScanPro_OTA_API.md §4.4). Answers at once; the step runs on in the
+// background and is followed through /update/status. Every refusal uses the contract's E_ codes.
+async function handleUpdate(req, res, ota, cors, log) {
+  const body = await readJsonBody(req, res, cors, 'E_INVALID_ARGUMENT');
+  if (body === undefined) return;
+  try {
+    sendJson(res, 200, await ota.handlePost(body), cors);
+  } catch (err) {
+    if (err instanceof OtaRequestError) {
+      log(`/update refused: ${err.code} — ${err.message}`);
+      sendError(res, err.status, err.code, err.message, cors);
+      return;
+    }
+    log(`/update failed: ${err.message}`);
+    sendError(res, 500, 'E_UNKNOWN', err.message, cors);
+  }
+}
+
+// The simulator's control route. Off unless the host turns it on (`serve --sim-control`), because a
+// loopback route that changes behaviour is exactly the kind of thing a real service must not have.
+async function handleSimControl(req, res, pathname, control, cors) {
+  const sub = pathname.slice(`${API_PREFIX}/_sim`.length);
+  if (sub === '' && req.method === 'GET') {
+    sendJson(res, 200, control.snapshot(), cors);
+    return;
+  }
+  if (sub === '' && req.method === 'POST') {
+    const body = await readJsonBody(req, res, cors, 'INVALID_JSON');
+    if (body === undefined) return;
+    try {
+      control.patch(body);
+    } catch (err) {
+      sendError(res, 400, 'INVALID_SWITCH', err.message, cors);
+      return;
+    }
+    sendJson(res, 200, control.snapshot(), cors);
+    return;
+  }
+  if (sub === '/reset' && req.method === 'POST') {
+    control.reset();
+    sendJson(res, 200, control.snapshot(), cors);
+    return;
+  }
+  sendError(res, 404, 'NOT_FOUND', `no simulator control route for ${req.method} ${pathname}`, cors);
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -224,9 +305,36 @@ async function handleStart(req, res, service, cors, log) {
  * @param {string[]|null} [opts.allowedOrigins]  null = echo any Origin; a list = allowlist
  * @param {boolean} [opts.checkHost]  reject non-loopback Host headers (default true)
  * @param {(msg: string) => void} [opts.log]
+ * @param {() => object|null} [opts.getOta]  the current OTA controller (it is replaced on every
+ *   simulated restart, hence a getter); null/absent = no OTA routes, like a pre-OTA service
+ * @param {object|null} [opts.sim]  the simulator switches (see ota/sim.js)
+ * @param {{ snapshot: () => object, patch: (p: object) => void, reset: () => void }|null} [opts.control]
+ *   the /_sim control route's backing; null keeps the route off (the default)
  */
-export function createRequestHandler({ service, allowedOrigins = null, checkHost = true, log = () => {} }) {
+export function createRequestHandler({
+  service,
+  allowedOrigins = null,
+  checkHost = true,
+  log = () => {},
+  getOta = () => null,
+  sim = null,
+  control = null,
+}) {
   return function handleRequest(req, res) {
+    // req.url is a path here (an origin-form request target), so any base works.
+    const pathname = new URL(req.url, 'http://127.0.0.1').pathname.replace(/\/+$/, '') || '/';
+    const isControl = control && (pathname === `${API_PREFIX}/_sim` || pathname.startsWith(`${API_PREFIX}/_sim/`));
+
+    // A server that belongs to another desktop session answers every path — OPTIONS included —
+    // with 503 BEFORE any CORS handling (ScanPro_OTA_API.md §4.1), so the browser sees no
+    // Access-Control-Allow-Origin at all. Simulated by a switch; the control route stays usable so
+    // the switch can be turned off again.
+    if (sim?.inactiveSession && !isControl) {
+      log(`${req.method} ${pathname} → 503 E_INACTIVE_SESSION (simulated)`);
+      sendError(res, 503, 'E_INACTIVE_SESSION', 'this service does not belong to the active desktop session');
+      return;
+    }
+
     const cors = corsHeaders(req, allowedOrigins);
 
     if (checkHost && !isLoopbackHost(req.headers.host)) {
@@ -235,21 +343,50 @@ export function createRequestHandler({ service, allowedOrigins = null, checkHost
       return;
     }
 
+    // Preflights pass for every path, /update included: POST /update carries a JSON body, so the
+    // browser always preflights it, and Chrome adds the Private Network Access question on top.
     if (req.method === 'OPTIONS') {
       handlePreflight(req, res, allowedOrigins);
       return;
     }
 
-    // req.url is a path here (an origin-form request target), so any base works.
-    const pathname = new URL(req.url, 'http://127.0.0.1').pathname.replace(/\/+$/, '') || '/';
     log(`${req.method} ${pathname}`);
+
+    if (isControl) {
+      handleSimControl(req, res, pathname, control, cors).catch((err) =>
+        sendError(res, 500, 'SIM_CONTROL_ERROR', err.message, cors)
+      );
+      return;
+    }
+
+    // An older local server simply has no OTA routes; the Scan tab treats that 404 as "fall back to
+    // the manual download" (spec §5.3). `noUpdateRoute` reproduces it.
+    const ota = sim?.noUpdateRoute ? null : getOta();
+
+    if (ota && pathname === `${API_PREFIX}/update`) {
+      if (req.method !== 'POST') {
+        sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use POST', { ...cors, Allow: 'POST, OPTIONS' });
+        return;
+      }
+      handleUpdate(req, res, ota, cors, log).catch((err) => sendError(res, 500, 'E_UNKNOWN', err.message, cors));
+      return;
+    }
+
+    if (ota && pathname === `${API_PREFIX}/update/status`) {
+      if (req.method !== 'GET') {
+        sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use GET', { ...cors, Allow: 'GET, OPTIONS' });
+        return;
+      }
+      sendJson(res, 200, ota.getStatus(), cors);
+      return;
+    }
 
     if (pathname === `${API_PREFIX}/status`) {
       if (req.method !== 'GET') {
         sendError(res, 405, 'METHOD_NOT_ALLOWED', 'use GET', { ...cors, Allow: 'GET, OPTIONS' });
         return;
       }
-      handleStatus(res, service, cors).catch((err) =>
+      handleStatus(res, service, getOta(), cors).catch((err) =>
         sendError(res, 500, 'STATUS_ERROR', err.message, cors)
       );
       return;
