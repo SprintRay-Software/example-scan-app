@@ -155,6 +155,40 @@ export function loadTelemetryConfig(env = process.env, defaults = {}) {
 }
 
 /**
+ * The OTA simulator switches an env file may set, as a patch for applySimPatch
+ * (src/local-server/ota/sim.js). None of this is in the contract — see README "OTA (update)".
+ * CLI flags on `serve` and the developer skin's OTA panel change the same switches.
+ *
+ * @param {Record<string, string|undefined>} env
+ * @returns {object} only the switches the env actually sets
+ */
+export function loadOtaSimEnv(env = process.env) {
+  const patch = {};
+  const str = (k) => String(env[k] ?? '').trim();
+  const num = (k) => {
+    const n = Number(str(k));
+    return str(k) !== '' && Number.isFinite(n) ? n : null;
+  };
+
+  if (str('SCANPRO_OTA_DOWNLOAD')) patch.downloadMode = str('SCANPRO_OTA_DOWNLOAD');
+  if (num('SCANPRO_OTA_DOWNLOAD_SPEED_MBPS') !== null) patch.downloadBytesPerSec = num('SCANPRO_OTA_DOWNLOAD_SPEED_MBPS') * 1024 * 1024;
+  if (num('SCANPRO_OTA_SIMULATED_SIZE_MB') !== null) patch.simulatedSizeBytes = num('SCANPRO_OTA_SIMULATED_SIZE_MB') * 1024 * 1024;
+  if (num('SCANPRO_OTA_INSTALL_SEC') !== null) patch.installMs = num('SCANPRO_OTA_INSTALL_SEC') * 1000;
+  if (num('SCANPRO_OTA_RESTART_DELAY_SEC') !== null) patch.restartDelayMs = num('SCANPRO_OTA_RESTART_DELAY_SEC') * 1000;
+  if (str('SCANPRO_OTA_PORT_SWITCH')) patch.portSwitch = boolEnv(env.SCANPRO_OTA_PORT_SWITCH, false);
+  if (num('SCANPRO_OTA_RESTART_PORT') !== null) patch.restartPort = num('SCANPRO_OTA_RESTART_PORT');
+  if (str('SCANPRO_OTA_FAIL')) patch.fail = str('SCANPRO_OTA_FAIL');
+  if (str('SCANPRO_OTA_STALL')) patch.stall = str('SCANPRO_OTA_STALL');
+  if (str('SCANPRO_OTA_ALLOW_HTTP_PACKAGE')) patch.allowHttpPackageUrl = boolEnv(env.SCANPRO_OTA_ALLOW_HTTP_PACKAGE, false);
+  return patch;
+}
+
+/** Whether the opt-in /scanpro/v1/_sim control route is on. Off unless asked for. */
+export function otaSimControlEnabled(env = process.env) {
+  return boolEnv(env.SCANPRO_OTA_SIM_CONTROL, false);
+}
+
+/**
  * Parse the local-service settings out of an env-like object.
  * @param {Record<string, string|undefined>} env
  * @param {{ appVersion?: string, installPath?: string, stateDir?: string }} [defaults]

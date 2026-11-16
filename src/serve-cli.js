@@ -12,11 +12,18 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-import { loadConfig, loadLocalServerConfig, packageVersion } from './config.js';
+import { loadConfig, loadLocalServerConfig, loadOtaSimEnv, otaSimControlEnabled, packageVersion } from './config.js';
 import { fail, info, ok, step } from './log.js';
 import { runFlow } from './core/flow.js';
 import { createConsoleReporter } from './core/console-reporter.js';
-import { startScanProLocalServer, summarizeArgument } from './local-server/index.js';
+import {
+  applySimPatch,
+  defaultSim,
+  describeSim,
+  startScanProLocalServer,
+  summarizeArgument,
+} from './local-server/index.js';
+import { DEFAULT_STATE_DIR } from './identity.js';
 import { createLaunchTelemetry } from './telemetry.js';
 import { schemeStatus } from './scheme/index.js';
 import { openWithOsHandler, waitForApplication } from './scheme/open.js';
@@ -36,10 +43,39 @@ export const SERVE_USAGE = `Run the ScanPro local HTTP service (loopback only):
     --scheme <s>           URL scheme whose OS handler /start launches
                            (default $SCANPRO_URL_SCHEME, else openScanPro)
     --not-installed        report installed=false, to exercise the web side's "not installed" path
-    --running              report running=true before any /start call
+    --installed            report installed=true even with no URL-scheme handler registered
+                           (OTA needs installed=true; the handler lookup can also take seconds)
+    --running              report running=true before any /start call (install → E_SCAN_ALREADY_RUNNING)
     --run-flow             handle /start in-process (exchange + upload) instead of launching
                            the desktop app
     --allow-any-host       skip the loopback Host check (DNS-rebinding guard)
+    --state-dir <dir>      where OTA state + packages live (default $SCANPRO_STATE_DIR,
+                           else ~/.sprintray-scanpro-example)
+
+  OTA (POST /update, GET /update/status — target "app" only; firmware answers E_UPDATE_UNSUPPORTED).
+  Everything below is a simulator switch, NOT part of the contract:
+    --real-download        really download package.url (default: simulated, no network)
+    --download-speed <MB/s>  simulated speed, or a throttle on the real download (default 64)
+    --simulated-size <MB>  size the simulated download pretends to fetch (default 2150)
+    --install-time <s>     how long "installing" lasts (default 4)
+    --restart-hold <s>     how long "restarting" is visible before the server goes down (default 2.5)
+    --restart-delay <s>    how long the server stays down while it is "replaced" (default 5)
+    --port-switch          come back from the restart on the next port up
+    --restart-port <n>     come back from the restart on exactly this port
+    --fail <spec>          force a failure: [download.|install.]<phase>:<E_CODE>[@percent]
+                           phase: downloading | verifying | installing | restarting
+                           e.g. downloading:E_DOWNLOAD_FAILED@30, installing:E_INSTALL_FAILED
+    --fail-once <spec>     same, but only the first time (so the retry succeeds)
+    --stall <spec>         freeze progress, updatedAt included: [download.|install.]<phase>[:<s>]
+                           phase: downloading | verifying | installing; no seconds = until cleared
+    --bad-signature        the installer's Authenticode check fails (install → E_VERIFY_FAILED)
+    --version-mismatch     the new service still reports the old version (→ E_INSTALL_FAILED)
+    --ota-unsupported      every POST /update → E_UPDATE_UNSUPPORTED
+    --no-update-route      an older local server: /update and /update/status answer 404
+    --inactive-session     every route, OPTIONS too, answers 503 E_INACTIVE_SESSION
+    --allow-http-package   accept http:// package URLs (the contract requires https://)
+    --sim-control          mount GET/POST /scanpro/v1/_sim and POST /scanpro/v1/_sim/reset
+    --ota-reset            forget every update, package and OTA-installed version at startup
     -h, --help             show this help`;
 
 function parseServeArgs(argv) {
@@ -49,14 +85,46 @@ function parseServeArgs(argv) {
     version: null,
     scheme: null,
     installed: true,
+    forceInstalled: false,
     running: false,
     runFlow: false,
     allowAnyHost: false,
+    stateDir: null,
+    simControl: false,
+    otaReset: false,
+    // OTA simulator switches, as a patch for applySimPatch — on top of the env's.
+    sim: {},
     help: false,
+  };
+  const number = (flag, value) => {
+    const n = Number(value);
+    if (value === undefined || !Number.isFinite(n) || n < 0) throw new Error(`${flag} needs a non-negative number`);
+    return n;
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '-h' || a === '--help') out.help = true;
+    else if (a === '--installed') out.forceInstalled = true;
+    else if (a === '--state-dir') out.stateDir = argv[++i];
+    else if (a === '--sim-control') out.simControl = true;
+    else if (a === '--ota-reset') out.otaReset = true;
+    else if (a === '--real-download') out.sim.downloadMode = 'real';
+    else if (a === '--download-speed') out.sim.downloadBytesPerSec = number(a, argv[++i]) * 1024 * 1024;
+    else if (a === '--simulated-size') out.sim.simulatedSizeBytes = number(a, argv[++i]) * 1024 * 1024;
+    else if (a === '--install-time') out.sim.installMs = number(a, argv[++i]) * 1000;
+    else if (a === '--restart-hold') out.sim.restartingHoldMs = number(a, argv[++i]) * 1000;
+    else if (a === '--restart-delay') out.sim.restartDelayMs = number(a, argv[++i]) * 1000;
+    else if (a === '--port-switch') out.sim.portSwitch = true;
+    else if (a === '--restart-port') out.sim.restartPort = number(a, argv[++i]);
+    else if (a === '--fail') out.sim.fail = argv[++i];
+    else if (a === '--fail-once') out.sim.failOnce = argv[++i];
+    else if (a === '--stall') out.sim.stall = argv[++i];
+    else if (a === '--bad-signature') out.sim.signatureInvalid = true;
+    else if (a === '--version-mismatch') out.sim.versionMismatch = true;
+    else if (a === '--ota-unsupported') out.sim.unsupported = true;
+    else if (a === '--no-update-route') out.sim.noUpdateRoute = true;
+    else if (a === '--inactive-session') out.sim.inactiveSession = true;
+    else if (a === '--allow-http-package') out.sim.allowHttpPackageUrl = true;
     else if (a === '--scheme') out.scheme = argv[++i];
     else if (a === '--port-start') out.portStart = Number.parseInt(argv[++i], 10);
     else if (a === '--port-end') out.portEnd = Number.parseInt(argv[++i], 10);
@@ -88,6 +156,14 @@ export async function runServeCommand(argv, env = process.env) {
   if (args.portEnd) options.portRangeEnd = args.portEnd;
   if (args.version) options.reportedVersion = args.version;
   if (args.allowAnyHost) options.checkHost = false;
+
+  // The OTA simulator switches: defaults, then the env file, then the flags. A bad value fails
+  // here, before the port is bound, rather than at the first /update.
+  const sim = defaultSim();
+  applySimPatch(sim, loadOtaSimEnv(env));
+  applySimPatch(sim, args.sim);
+  if (args.forceInstalled) sim.scanPro.installed = true;
+  const otaStateDir = args.stateDir ?? options.stateDir ?? DEFAULT_STATE_DIR;
 
   // --run-flow needs the client credentials up front, so a missing .env fails now rather
   // than in the middle of the first /start.
@@ -220,7 +296,25 @@ export async function runServeCommand(argv, env = process.env) {
     },
   };
 
-  const result = await startScanProLocalServer({ service, options, log: (msg) => info(msg) });
+  const result = await startScanProLocalServer({
+    service,
+    options,
+    log: (msg) => info(msg),
+    ota: {
+      sim,
+      stateDir: otaStateDir,
+      control: args.simControl || otaSimControlEnabled(env),
+      // An explicit --version is the version under test: an earlier simulated update must not
+      // override it. Without the flag, what the last OTA installed is what /status reports.
+      resetInstalledVersion: Boolean(args.version),
+    },
+    onRestart: (event) => {
+      if (event.type === 'down') step(`OTA: service down for the update — back in ${event.delayMs} ms`);
+      else if (event.type === 'up') {
+        ok(`OTA: service back on ${event.url}${event.port !== event.previousPort ? ` (port changed from ${event.previousPort})` : ''}`);
+      } else fail(`OTA: service could not come back — ${event.error?.message}`);
+    },
+  });
 
   if (!result.ok) {
     fail(
@@ -230,9 +324,12 @@ export async function runServeCommand(argv, env = process.env) {
     return 1;
   }
 
+  if (args.otaReset) result.ota.reset();
+
   ok(`local service listening on ${result.url}`);
   for (const endpoint of result.endpoints) info(endpoint);
-  info(`reporting running=${state.running} version=${state.version}`);
+  info(`reporting running=${state.running} version=${result.ota.controller.decorateStatus(state).version}`);
+  info(`OTA: state in ${otaStateDir}/ota; simulator switches: ${describeSim(sim)}`);
   info(
     options.allowedOrigins
       ? `CORS allowlist: ${options.allowedOrigins.join(', ')}`
