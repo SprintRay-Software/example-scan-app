@@ -21,6 +21,7 @@
     "register": "node --env-file-if-exists=.env src/index.js register",
     "unregister": "node --env-file-if-exists=.env src/index.js unregister",
     "status": "node --env-file-if-exists=.env src/index.js status",
+    "test": "node --test test/*.test.js",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win --x64",
     "dist:mac": "electron-builder --mac --arm64"
