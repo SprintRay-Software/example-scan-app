@@ -193,7 +193,7 @@ export async function startScanProLocalServer({ service, options = {}, log = () 
     if (restarting || lifetime.signal.aborted) return;
     restarting = (async () => {
       const previousPort = current.port;
-      controller?.dispose();
+      await controller?.dispose();
       await current.close({ force: true });
       current = null;
       log(`service down for the update (port ${previousPort} closed); back in ${delayMs} ms`);
@@ -249,7 +249,7 @@ export async function startScanProLocalServer({ service, options = {}, log = () 
     whenRestarted: () => restarting ?? Promise.resolve(),
     close: async () => {
       lifetime.abort();
-      controller?.dispose();
+      await controller?.dispose();
       await restarting;
       await current?.close({ force: true });
       current = null;

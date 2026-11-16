@@ -101,23 +101,30 @@ export async function realDownload({ url, dest, signal, bytesPerSec = 0, checkpo
 
   try {
     await checkpoint(percentOf(0, total));
+    // Throttled, a chunk is accounted for in slices of ~1/10 s worth of bytes: fetch hands over
+    // whatever piled up while we slept, often a large buffer, and counting it in one go would make
+    // a slow download jump 12 % → 62 % → 100 % instead of moving like one over a clinic's line.
+    const slice = bytesPerSec > 0 ? Math.max(4096, Math.floor(bytesPerSec / 10)) : Infinity;
     for await (const chunk of res.body) {
-      if (signal?.aborted) throw new OtaAborted();
-      if (writeError) throw writeError;
-      hash.update(chunk);
-      if (!out.write(chunk)) await once(out, 'drain');
-      received += chunk.length;
+      for (let offset = 0; offset < chunk.length; offset += slice) {
+        if (signal?.aborted) throw new OtaAborted();
+        if (writeError) throw writeError;
+        const part = slice === Infinity ? chunk : chunk.subarray(offset, offset + slice);
+        hash.update(part);
+        if (!out.write(part)) await once(out, 'drain');
+        received += part.length;
 
-      const percent = percentOf(received, total);
-      if (percent !== lastPercent) {
-        lastPercent = percent;
-        await checkpoint(percent);
-      }
-      // Throttle: hold back until the elapsed time matches the configured speed, so a QA run can
-      // watch a small local file download as slowly as a 2.1 GB one over a clinic's line.
-      if (bytesPerSec > 0) {
-        const due = (received / bytesPerSec) * 1000 - (Date.now() - startedAt);
-        if (due > 0) await sleep(due, signal);
+        const percent = percentOf(received, total);
+        if (percent !== lastPercent) {
+          lastPercent = percent;
+          await checkpoint(percent);
+        }
+        // Throttle: hold back until the elapsed time matches the configured speed, so a QA run can
+        // watch a small local file download as slowly as a 2.1 GB one.
+        if (bytesPerSec > 0) {
+          const due = (received / bytesPerSec) * 1000 - (Date.now() - startedAt);
+          if (due > 0) await sleep(due, signal);
+        }
       }
     }
     if (writeError) throw writeError;
@@ -144,13 +151,14 @@ export async function realDownload({ url, dest, signal, bytesPerSec = 0, checkpo
  * Pretend to download `sizeBytes` at `bytesPerSec`, then leave a placeholder file at `dest`.
  * @returns {Promise<{ size: number, md5: string, simulated: true }>}
  */
-export async function simulatedDownload({ url, version, dest, signal, sizeBytes, bytesPerSec, checkpoint }) {
+export async function simulatedDownload({ url, version, dest, signal, sizeBytes, bytesPerSec, checkpoint, startPercent = 0 }) {
   const total = Math.max(1, sizeBytes);
   const perTick = Math.max(1, (bytesPerSec || total) * (TICK_MS / 1000));
-  let received = 0;
+  // A download resumed by a restarted service picks up where the persisted percent left it.
+  let received = Math.ceil((total * Math.max(0, Math.min(100, startPercent))) / 100);
   let lastPercent = -1;
 
-  await checkpoint(0);
+  await checkpoint(percentOf(received, total));
   while (received < total) {
     await sleep(TICK_MS, signal);
     received = Math.min(total, received + perTick);

@@ -222,7 +222,7 @@ export function createOtaController({
   }
 
   // ---- download -------------------------------------------------------------------------------
-  async function runDownload({ target, pkg }) {
+  async function runDownload({ target, pkg, startPercent = 0 }) {
     const action = 'download';
     try {
       store.ensureTargetDir(target);
@@ -239,6 +239,7 @@ export function createOtaController({
               sizeBytes: sim.simulatedSizeBytes,
               bytesPerSec: sim.downloadBytesPerSec,
               checkpoint: cp,
+              startPercent,
             });
 
       await timedPhase(action, 'verifying', sim.verifyMs);
@@ -412,6 +413,19 @@ export function createOtaController({
     if (!ACTIVE_PHASES.has(st.phase)) return;
     const run = data().run ?? {};
 
+    if (st.action === 'download' && sim.interruptedDownload === 'resume' && run.package) {
+      // The download belongs to the service, not to whoever asked for it: a restarted service
+      // carries on, so a web page reopened afterwards finds it still moving. A real download starts
+      // over (no Range support assumed); the simulated one continues from the persisted percent.
+      const startPercent = sim.downloadMode === 'simulated' ? (st.phase === 'verifying' ? 100 : st.percent ?? 0) : 0;
+      setStatus({ phase: 'downloading', percent: startPercent, error: null });
+      log(`OTA: resuming the interrupted download of ${st.target} ${run.package.version} at ${startPercent}%`);
+      job = runDownload({ target: st.target, pkg: run.package, startPercent }).finally(() => {
+        job = null;
+      });
+      return;
+    }
+
     if (st.action === 'download') {
       store.deletePackage(st.target);
       setStatus({ phase: 'failed', error: { code: 'E_DOWNLOAD_FAILED', message: 'the service stopped while the package was downloading; download it again' } });
@@ -463,9 +477,13 @@ export function createOtaController({
       abort.abort();
       store.reset();
     },
-    /** The simulated process goes away: running steps stop, nothing more is written. */
+    /**
+     * The simulated process goes away: running steps stop, nothing more is written. Resolves once
+     * the step has unwound, so a successor never races it for the same package file.
+     */
     dispose() {
       abort.abort();
+      return job ?? Promise.resolve();
     },
     /** Resolves once the running step (if any) has ended — for tests. */
     idle: () => job ?? Promise.resolve(),

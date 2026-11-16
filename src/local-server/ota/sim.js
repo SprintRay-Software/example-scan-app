@@ -69,6 +69,10 @@ export function defaultSim() {
     noUpdateRoute: false,
     // The server belongs to another desktop session → every route, OPTIONS too, answers 503.
     inactiveSession: false,
+    // What a restarted service does with a download the previous one did not finish. 'resume' carries
+    // on (the web page reopened after a reboot still sees progress); 'fail' settles it as
+    // E_DOWNLOAD_FAILED. The contract does not say which — DS should handle both.
+    interruptedDownload: 'resume',
     // Accept http:// package URLs (the contract requires https://) — for a local package server.
     allowHttpPackageUrl: false,
     // { action: 'download'|'install'|null, phase, code, atPercent: number|null, remaining: number|null }
@@ -158,6 +162,9 @@ export function applySimPatch(sim, patch = {}) {
     } else if (key === 'downloadMode') {
       if (!DOWNLOAD_MODES.includes(value)) throw new Error(`downloadMode must be one of ${DOWNLOAD_MODES.join(', ')}`);
       next.downloadMode = value;
+    } else if (key === 'interruptedDownload') {
+      if (!['resume', 'fail'].includes(value)) throw new Error('interruptedDownload must be "resume" or "fail"');
+      next.interruptedDownload = value;
     } else if (key === 'restartPort') {
       if (value !== null && !(Number.isInteger(value) && value > 0 && value < 65536)) throw new Error('restartPort must be a port number or null');
       next.restartPort = value;

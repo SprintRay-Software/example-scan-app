@@ -444,13 +444,13 @@ describe('persistence and the service being replaced', () => {
     }
   });
 
-  test('a service killed mid-download comes back failed with E_DOWNLOAD_FAILED', async () => {
-    const first = await startService({ sim: fastSim({ downloadBytesPerSec: 64 * 1024 }) });
+  test('a service killed mid-download comes back failed with E_DOWNLOAD_FAILED under interruptedDownload=fail', async () => {
+    const first = await startService({ sim: fastSim({ downloadBytesPerSec: 64 * 1024, interruptedDownload: 'fail' }) });
     await post(first.srv, { action: 'download', target: 'app', package: pkg() });
     await waitForPhase(first.srv, 'downloading');
     await first.srv.close();
 
-    const second = await startService({ stateDir: first.dir });
+    const second = await startService({ stateDir: first.dir, sim: fastSim({ interruptedDownload: 'fail' }) });
     try {
       const st = await status(second.srv);
       assert.equal(st.phase, 'failed');
@@ -491,6 +491,111 @@ describe('persistence and the service being replaced', () => {
     } finally {
       await srv.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// The download and the install run in the local server, not in the page: the Scan tab can be
+// closed and reopened at any point and must find the step where it is (brief "Requirement",
+// spec §5.4 "Page load"). Each check below uses a FRESH client — it knows no port and no prior
+// state, probes the range like the Scan tab does, and reads /update/status once.
+async function freshClientStatus() {
+  for (let port = RANGE.portRangeStart; port <= RANGE.portRangeEnd; port++) {
+    try {
+      const st = await rawRequest(port, 'GET', '/status');
+      if (st.status === 200 && JSON.parse(st.text).service === 'SprintRayScanService') {
+        const up = await rawRequest(port, 'GET', '/update/status');
+        return { port, ...JSON.parse(up.text) };
+      }
+    } catch {
+      // nothing on this port (or the service is between runs) — try the next one
+    }
+  }
+  return null;
+}
+
+const idle = (ms) => new Promise((r) => setTimeout(r, ms));
+
+describe('the web page closes and reopens (no client polling)', () => {
+  test('a download advances with nobody polling, and a new client reads it mid-way and at the end', async () => {
+    // 256 KB at 128 KB/s ≈ 2 s.
+    const { srv } = await startService({ sim: fastSim({ downloadBytesPerSec: 128 * 1024 }) });
+    try {
+      assert.equal((await post(srv, { action: 'download', target: 'app', package: pkg() })).status, 200);
+      // The page that started it is gone: not a single request for a while.
+      await idle(700);
+      const mid = await freshClientStatus();
+      assert.equal(mid.phase, 'downloading');
+      assert.equal(mid.action, 'download');
+      assert.equal(mid.toVersion, TO);
+      assert.ok(mid.percent > 0 && mid.percent < 100, `percent ${mid.percent}`);
+
+      await idle(500);
+      const later = await freshClientStatus();
+      assert.ok(later.percent > mid.percent || later.phase !== 'downloading', 'progress moved without polling');
+
+      await idle(2000);
+      const end = await freshClientStatus();
+      assert.equal(end.phase, 'downloaded');
+      assert.equal(end.percent, 100);
+      assert.equal(end.startedAt, mid.startedAt, 'the same step, not a new one');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  test('a new client finds the install mid-way, and finds it completed on the new port after the restart', async () => {
+    const sim = fastSim({ installMs: 600, restartingHoldMs: 200, restartDelayMs: 300, portSwitch: true });
+    const { srv } = await startService({ sim });
+    try {
+      await download(srv);
+      const firstPort = srv.port;
+      assert.equal((await post(srv, { action: 'install', target: 'app', package: pkg() })).status, 200);
+
+      await idle(250);
+      const mid = await freshClientStatus();
+      assert.ok(['verifying', 'installing'].includes(mid.phase), mid.phase);
+      assert.equal(mid.action, 'install');
+      assert.equal(mid.toVersion, TO);
+
+      // No requests through installing, restarting and the service coming back elsewhere.
+      await idle(1800);
+      const end = await freshClientStatus();
+      assert.ok(end, 'the service is found again by probing');
+      assert.notEqual(end.port, firstPort);
+      assert.equal(end.phase, 'completed');
+      assert.equal(end.toVersion, TO);
+      assert.equal(end.startedAt, mid.startedAt);
+      const st = await rawRequest(end.port, 'GET', '/status');
+      assert.equal(JSON.parse(st.text).version, TO);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  test('a download survives a restart of the simulator itself and carries on', async () => {
+    // Simulated: 10 MB at 4 MB/s ≈ 2.5 s, so the restart lands mid-way.
+    const sim = () => fastSim({ downloadMode: 'simulated', simulatedSizeBytes: 10 * 1024 * 1024, downloadBytesPerSec: 4 * 1024 * 1024 });
+    const first = await startService({ sim: sim() });
+    await post(first.srv, { action: 'download', target: 'app', package: pkg() });
+    await idle(900);
+    const before = await freshClientStatus();
+    assert.equal(before.phase, 'downloading');
+    await first.srv.close();
+
+    const second = await startService({ stateDir: first.dir, sim: sim() });
+    try {
+      const after = await freshClientStatus();
+      assert.equal(after.phase, 'downloading');
+      assert.equal(after.toVersion, TO);
+      assert.equal(after.startedAt, before.startedAt);
+      assert.ok(after.percent >= before.percent, `resumed at ${after.percent}%, was ${before.percent}%`);
+
+      await idle(2500);
+      assert.equal((await freshClientStatus()).phase, 'downloaded');
+      assert.equal(packageFiles(first.dir).length, 1);
+    } finally {
+      await second.srv.close();
     }
   });
 });
