@@ -27,6 +27,7 @@ import { isoWithOffset } from '../../telemetry.js';
 import { OtaAborted, OtaFailure, OtaRequestError } from './errors.js';
 import { md5File, realDownload, simulatedDownload, sleep } from './download.js';
 import { failPercent, faultMatches } from './sim.js';
+import { IDLE_STATUS } from './store.js';
 import { compareVersions } from './versions.js';
 
 // `updating_firmware` is a contract phase too, but firmware is not simulated, so it never occurs.
@@ -135,7 +136,8 @@ export function createOtaController({
 
   function replaceStatus(status, run) {
     const now = isoWithOffset();
-    data().status = { error: null, percent: null, ...status, startedAt: now, updatedAt: now };
+    // Built on IDLE_STATUS so the fields keep the contract's order whatever the caller passed.
+    data().status = { ...IDLE_STATUS, ...status, startedAt: now, updatedAt: now };
     data().run = run;
     store.save();
   }
