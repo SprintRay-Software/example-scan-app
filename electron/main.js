@@ -11,16 +11,26 @@
 // transports carry the same base64 launch payload and land in the same UI, and both stamp the
 // `scanner.connected` telemetry event (src/telemetry.js) as the launch comes in — the run sends
 // it once the token exchange names the doctor.
+//
+// The local service also simulates the app OTA of ScanPro_OTA_API.md (POST /update,
+// GET /update/status): downloads are simulated by default (no 2.1 GB fetch), and the developer
+// skin's OTA panel drives the simulator-only switches through the ota:* IPC below.
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 
-import { normalizeBaseUrl, loadLocalServerConfig } from '../src/config.js';
+import { normalizeBaseUrl, loadLocalServerConfig, loadOtaSimEnv, otaSimControlEnabled } from '../src/config.js';
 import { runFlow, decodeLaunch } from '../src/core/flow.js';
 import { createReporter } from '../src/core/reporter.js';
-import { startScanProLocalServer, summarizeArgument } from '../src/local-server/index.js';
+import {
+  applySimPatch,
+  defaultSim,
+  describeSim,
+  startScanProLocalServer,
+  summarizeArgument,
+} from '../src/local-server/index.js';
 import { parseToothConditions, DEFAULT_SCAN_FILE_TYPES, SCANPRO_SCAN_FILE_TYPES } from '../src/scan-report.js';
 import { createLaunchTelemetry } from '../src/telemetry.js';
 
@@ -356,6 +366,15 @@ app.on('before-quit', () => {
 // ---------------------------------------------------------------------------
 let localServer = null;
 let localServerState = { enabled: true, status: 'starting' };
+// The OTA simulator switches. Created once and kept for the app's lifetime, so they outlive the
+// simulated service restarts. Simulated download by default — see sim.js; SCANPRO_OTA_* in the
+// .env and the developer skin's OTA panel change them.
+const otaSim = defaultSim();
+try {
+  applySimPatch(otaSim, loadOtaSimEnv({ ...process.env, ...ENV }));
+} catch (err) {
+  console.warn(`[local-server] ignoring SCANPRO_OTA_* settings: ${err.message}`);
+}
 
 function setLocalServerState(next) {
   localServerState = next;
@@ -414,11 +433,28 @@ async function startLocalService() {
     service: scanProService,
     options,
     log: localServiceLog,
+    ota: {
+      sim: otaSim,
+      stateDir: options.stateDir,
+      control: otaSimControlEnabled({ ...process.env, ...ENV }),
+    },
+    // The window stays; only the HTTP service is "replaced" by the simulated update. The server
+    // chip follows it down and back up, port change included.
+    onRestart: (event) => {
+      if (event.type === 'down') {
+        setLocalServerState({ ...localServerState, status: 'restarting', previousPort: event.previousPort });
+      } else if (event.type === 'up') {
+        setLocalServerState({ enabled: true, status: 'listening', port: event.port, url: event.url, endpoints: localServer?.endpoints ?? [] });
+      } else {
+        setLocalServerState({ enabled: true, status: 'failed', error: event.error?.message ?? 'restart failed' });
+      }
+    },
   });
 
   if (result.ok) {
     localServer = result;
     localServiceLog(`listening on ${result.url}`);
+    localServiceLog(`OTA simulator switches: ${describeSim(otaSim)}`);
     setLocalServerState({
       enabled: true,
       status: 'listening',
@@ -444,6 +480,36 @@ async function startLocalService() {
 ipcMain.handle('defaults:get', () => defaults());
 
 ipcMain.handle('localserver:get', () => localServerState);
+
+// ---- OTA simulator panel (developer skin). Simulator switches only — none of this is contract.
+function otaSnapshot() {
+  const ota = localServer?.ota;
+  if (!ota) return { available: false, sim: otaSim };
+  const base = scanProService.getStatus();
+  return {
+    available: true,
+    ...ota.snapshot(),
+    scanPro: ota.controller ? ota.controller.decorateStatus(base) : base,
+    stateDir: ota.stateDir,
+  };
+}
+
+ipcMain.handle('ota:get', () => otaSnapshot());
+
+ipcMain.handle('ota:patch', (_event, patch) => {
+  try {
+    if (localServer?.ota) localServer.ota.patch(patch);
+    else applySimPatch(otaSim, patch);
+    return { ok: true, snapshot: otaSnapshot() };
+  } catch (err) {
+    return { ok: false, error: err.message, snapshot: otaSnapshot() };
+  }
+});
+
+ipcMain.handle('ota:reset', () => {
+  localServer?.ota?.reset();
+  return otaSnapshot();
+});
 
 ipcMain.handle('scheme:status', () => ({
   scheme: URL_SCHEME,

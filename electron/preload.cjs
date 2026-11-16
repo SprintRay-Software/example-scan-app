@@ -43,6 +43,12 @@ contextBridge.exposeInMainWorld('scanpro', {
     return () => ipcRenderer.removeListener('launch', listener);
   },
 
+  // OTA simulator (developer skin panel): snapshot of switches + /update/status, change switches,
+  // forget every update. Simulator-only — none of this exists on a real ScanPro service.
+  getOta: () => ipcRenderer.invoke('ota:get'),
+  patchOta: (patch) => ipcRenderer.invoke('ota:patch', patch),
+  resetOta: () => ipcRenderer.invoke('ota:reset'),
+
   // local HTTP service: current state, plus pushes when it changes
   getLocalServerState: () => ipcRenderer.invoke('localserver:get'),
   onLocalServerState: (cb) => {

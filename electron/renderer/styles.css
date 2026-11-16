@@ -108,6 +108,31 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .scan-type-row input { flex: 1 1 auto; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 12px; }
 .check input { accent-color: var(--accent); }
+select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  width: 100%;
+  min-width: 0;
+}
+select:focus { outline: none; border-color: var(--accent); }
+
+/* OTA simulator panel */
+.ota-status { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.ota-line { display: flex; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: 12px; }
+.ota-line b { color: var(--accent); font-weight: 600; }
+.ota-status.is-failed .ota-line b { color: var(--red); }
+.ota-status.is-done .ota-line b { color: var(--green); }
+.ota-error { color: var(--red); font-family: var(--mono); font-size: 11px; word-break: break-word; }
+.ota-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 10px; }
+.ota-checks { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.ota-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+/* a phase with no measurable progress (verifying, installing, restarting): full bar, dimmed */
+.progress-bar.progress-indeterminate { opacity: 0.4; }
 
 /* segmented control */
 .seg { display: inline-flex; background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px; margin-bottom: 10px; }

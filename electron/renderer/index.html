@@ -407,6 +407,76 @@
           <button id="btn-run" class="btn btn-primary">Run flow</button>
           <button id="btn-clear" class="btn btn-ghost" type="button">Clear</button>
         </div>
+
+        <!-- The app-OTA simulation of the local service (POST /update, GET /update/status). Every
+             control here is a SIMULATOR switch — a real ScanPro service has none of them. -->
+        <section class="panel" id="ota-panel">
+          <div class="panel-head"><h2>OTA simulator</h2><span class="hint">app only &middot; not in the contract</span></div>
+          <div id="ota-status" class="ota-status">
+            <div class="ota-line"><b id="ota-phase">idle</b><span id="ota-versions" class="hint"></span></div>
+            <div class="progress-track"><div id="ota-bar" class="progress-bar"></div></div>
+            <div id="ota-error" class="ota-error" hidden></div>
+            <div id="ota-meta" class="hint"></div>
+          </div>
+
+          <div class="ota-grid">
+            <label class="field"><span>Download</span>
+              <select id="ota-download-mode"><option value="simulated">simulated (no network)</option><option value="real">real (package.url)</option></select>
+            </label>
+            <label class="field"><span>Speed <em>(MB/s)</em></span><input id="ota-speed" type="text" inputmode="decimal" /></label>
+            <label class="field"><span>Restart delay <em>(s)</em></span><input id="ota-restart-delay" type="text" inputmode="decimal" /></label>
+            <label class="field"><span>ScanPro running</span>
+              <select id="ota-running"><option value="">as the app is</option><option value="true">yes</option><option value="false">no</option></select>
+            </label>
+          </div>
+
+          <div class="field">
+            <span>Force a failure</span>
+            <span class="secret-row">
+              <select id="ota-fail-phase">
+                <option value="">— none —</option>
+                <option value="downloading">downloading</option>
+                <option value="download.verifying">verifying (download)</option>
+                <option value="install.verifying">verifying (install)</option>
+                <option value="installing">installing</option>
+                <option value="restarting">restarting</option>
+              </select>
+              <select id="ota-fail-code"></select>
+            </span>
+            <label class="check"><input id="ota-fail-once" type="checkbox" checked /><span>only once (the retry succeeds)</span></label>
+          </div>
+
+          <div class="field">
+            <span>Stall progress <em>(updatedAt frozen)</em></span>
+            <select id="ota-stall">
+              <option value="">— none —</option>
+              <option value="downloading">downloading</option>
+              <option value="download.verifying">verifying (download)</option>
+              <option value="install.verifying">verifying (install)</option>
+              <option value="installing">installing</option>
+            </select>
+          </div>
+
+          <div class="ota-checks">
+            <label class="check"><input id="ota-port-switch" type="checkbox" /><span>come back on another port</span></label>
+            <label class="check"><input id="ota-bad-signature" type="checkbox" /><span>bad Authenticode signature</span></label>
+            <label class="check"><input id="ota-version-mismatch" type="checkbox" /><span>new service keeps the old version</span></label>
+            <label class="check"><input id="ota-unsupported" type="checkbox" /><span>OTA unsupported (E_UPDATE_UNSUPPORTED)</span></label>
+            <label class="check"><input id="ota-no-route" type="checkbox" /><span>older service: no /update (404)</span></label>
+            <label class="check"><input id="ota-inactive" type="checkbox" /><span>inactive session (503 everywhere)</span></label>
+          </div>
+
+          <div class="ota-actions">
+            <button id="btn-ota-reset" class="btn btn-ghost btn-sm" type="button">Reset OTA state</button>
+            <span id="ota-note" class="hint"></span>
+          </div>
+          <span class="hint">
+            Drive it from the web app or curl: <code>POST /scanpro/v1/update</code>, poll
+            <code>GET /scanpro/v1/update/status</code>. The window plays ScanPro, so it reports
+            <em>running</em> &mdash; set <em>ScanPro running</em> to <em>no</em> to let an install through.
+            <code>target: "firmware"</code> is not simulated (E_UPDATE_UNSUPPORTED).
+          </span>
+        </section>
       </aside>
 
       <!-- Right: observability -->
