@@ -74,6 +74,9 @@ export const SERVE_USAGE = `Run the ScanPro local HTTP service (loopback only):
     --no-update-route      an older local server: /update and /update/status answer 404
     --inactive-session     every route, OPTIONS too, answers 503 E_INACTIVE_SESSION
     --allow-http-package   accept http:// package URLs (the contract requires https://)
+    --interrupted-download <resume|fail>
+                           what a restarted service does with an unfinished download
+                           (default resume: it carries on; fail: E_DOWNLOAD_FAILED)
     --sim-control          mount GET/POST /scanpro/v1/_sim and POST /scanpro/v1/_sim/reset
     --ota-reset            forget every update, package and OTA-installed version at startup
     -h, --help             show this help`;
@@ -125,6 +128,7 @@ function parseServeArgs(argv) {
     else if (a === '--no-update-route') out.sim.noUpdateRoute = true;
     else if (a === '--inactive-session') out.sim.inactiveSession = true;
     else if (a === '--allow-http-package') out.sim.allowHttpPackageUrl = true;
+    else if (a === '--interrupted-download') out.sim.interruptedDownload = argv[++i];
     else if (a === '--scheme') out.scheme = argv[++i];
     else if (a === '--port-start') out.portStart = Number.parseInt(argv[++i], 10);
     else if (a === '--port-end') out.portEnd = Number.parseInt(argv[++i], 10);
