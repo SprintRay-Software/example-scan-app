@@ -574,6 +574,14 @@ function updateServerChip(state) {
     chip.title = 'Local HTTP service disabled (SCANPRO_LOCAL_SERVER=0)';
     return;
   }
+  if (state.status === 'restarting') {
+    // The simulated OTA install replaced the service: it is down until it comes back, maybe
+    // on another port.
+    chip.textContent = `server: restarting (was :${state.previousPort})`;
+    chip.className = 'chip chip-warn';
+    chip.title = 'Simulated OTA install: the local service is being replaced';
+    return;
+  }
   if (state.status === 'listening') {
     chip.textContent = `server: 127.0.0.1:${state.port}`;
     chip.className = 'chip chip-ok';
@@ -588,6 +596,132 @@ function updateServerChip(state) {
       ? 'local_server.port_unavailable was reported.'
       : 'Telemetry not sent (endpoint/key not configured).');
 }
+
+// ---------------- OTA simulator panel ----------------
+// Mirrors the local service's /update/status and edits the simulator switches through IPC. The
+// switches are simulator-only; the status is exactly what a caller of /update/status sees.
+const OTA_FAILURE_CODES = {
+  downloading: ['E_DOWNLOAD_FAILED', 'E_INSUFFICIENT_DISK_SPACE', 'E_TIMEOUT', 'E_UNKNOWN'],
+  'download.verifying': ['E_VERIFY_FAILED', 'E_UNKNOWN'],
+  'install.verifying': ['E_VERIFY_FAILED', 'E_UNKNOWN'],
+  installing: ['E_INSTALL_FAILED', 'E_USER_CANCELLED', 'E_TIMEOUT', 'E_UNKNOWN'],
+  restarting: ['E_INSTALL_FAILED', 'E_TIMEOUT', 'E_UNKNOWN'],
+};
+
+const otaRefs = (s) => (s ? `${s.action ? `${s.action}.` : ''}${s.phase}` : '');
+
+function fillFailCodes(phase, selected) {
+  const sel = $('ota-fail-code');
+  sel.innerHTML = '';
+  for (const code of OTA_FAILURE_CODES[phase] || []) {
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = code;
+    sel.appendChild(opt);
+  }
+  sel.disabled = !phase;
+  if (selected) sel.value = selected;
+}
+
+// Inputs the tester is typing in are left alone by the 1 s refresh.
+const otaEditing = (id) => document.activeElement === $(id);
+
+function renderOta(snap) {
+  if (!snap) return;
+  const st = snap.status || { phase: 'idle' };
+  const box = $('ota-status');
+  box.classList.toggle('is-failed', st.phase === 'failed');
+  box.classList.toggle('is-done', st.phase === 'completed' || st.phase === 'downloaded');
+  $('ota-phase').textContent = st.action ? `${st.action} · ${st.phase}` : st.phase;
+  $('ota-versions').textContent = st.toVersion ? `${st.fromVersion ?? 'null'} → ${st.toVersion}` : '';
+  $('ota-bar').style.width = `${st.percent ?? (st.phase === 'idle' ? 0 : 100)}%`;
+  $('ota-bar').classList.toggle('progress-indeterminate', st.percent === null && st.phase !== 'idle');
+  const err = $('ota-error');
+  err.hidden = !st.error;
+  err.textContent = st.error ? `${st.error.code}: ${st.error.message}` : '';
+  const installed = snap.scanPro?.version ?? '—';
+  const pkg = snap.packages?.app;
+  $('ota-meta').textContent =
+    `installed ${installed}` +
+    (st.percent !== null && st.percent !== undefined ? ` · ${st.percent}%` : '') +
+    (pkg ? ` · package ${pkg.package.version} on disk` : '') +
+    (st.updatedAt ? ` · updated ${st.updatedAt.slice(11, 19)}` : '');
+
+  const sim = snap.sim;
+  if (!sim) return;
+  if (!otaEditing('ota-download-mode')) $('ota-download-mode').value = sim.downloadMode;
+  if (!otaEditing('ota-speed')) $('ota-speed').value = String(+(sim.downloadBytesPerSec / 1048576).toFixed(2));
+  if (!otaEditing('ota-restart-delay')) $('ota-restart-delay').value = String(sim.restartDelayMs / 1000);
+  if (!otaEditing('ota-running')) $('ota-running').value = sim.scanPro.running === null ? '' : String(sim.scanPro.running);
+  const failRef = otaRefs(sim.fail);
+  if (!otaEditing('ota-fail-phase') && !otaEditing('ota-fail-code')) {
+    $('ota-fail-phase').value = failRef;
+    fillFailCodes(failRef, sim.fail?.code);
+  }
+  if (!otaEditing('ota-stall')) $('ota-stall').value = otaRefs(sim.stall);
+  $('ota-port-switch').checked = sim.portSwitch;
+  $('ota-bad-signature').checked = sim.signatureInvalid;
+  $('ota-version-mismatch').checked = sim.versionMismatch;
+  $('ota-unsupported').checked = sim.unsupported;
+  $('ota-no-route').checked = sim.noUpdateRoute;
+  $('ota-inactive').checked = sim.inactiveSession;
+}
+
+async function patchOta(patch) {
+  const res = await window.scanpro.patchOta(patch);
+  $('ota-note').textContent = res.ok ? '' : res.error;
+  renderOta(res.snapshot);
+}
+
+function wireOtaPanel() {
+  $('ota-download-mode').addEventListener('change', (e) => patchOta({ downloadMode: e.target.value }));
+  $('ota-speed').addEventListener('change', (e) => patchOta({ downloadBytesPerSec: Number(e.target.value) * 1048576 }));
+  $('ota-restart-delay').addEventListener('change', (e) => patchOta({ restartDelayMs: Number(e.target.value) * 1000 }));
+  $('ota-running').addEventListener('change', (e) =>
+    patchOta({ scanPro: { running: e.target.value === '' ? null : e.target.value === 'true' } })
+  );
+
+  const applyFail = () => {
+    const phase = $('ota-fail-phase').value;
+    if (!phase) return patchOta({ fail: null });
+    const spec = `${phase}:${$('ota-fail-code').value}`;
+    return patchOta($('ota-fail-once').checked ? { failOnce: spec } : { fail: spec });
+  };
+  $('ota-fail-phase').addEventListener('change', (e) => {
+    fillFailCodes(e.target.value);
+    applyFail();
+  });
+  $('ota-fail-code').addEventListener('change', applyFail);
+  $('ota-fail-once').addEventListener('change', applyFail);
+  $('ota-stall').addEventListener('change', (e) => patchOta({ stall: e.target.value || null }));
+
+  const toggles = {
+    'ota-port-switch': 'portSwitch',
+    'ota-bad-signature': 'signatureInvalid',
+    'ota-version-mismatch': 'versionMismatch',
+    'ota-unsupported': 'unsupported',
+    'ota-no-route': 'noUpdateRoute',
+    'ota-inactive': 'inactiveSession',
+  };
+  for (const [id, key] of Object.entries(toggles)) {
+    $(id).addEventListener('change', (e) => patchOta({ [key]: e.target.checked }));
+  }
+
+  $('btn-ota-reset').addEventListener('click', async () => renderOta(await window.scanpro.resetOta()));
+
+  // The status moves on its own (the step runs in the service), so the panel just re-reads it.
+  const refresh = async () => {
+    try {
+      renderOta(await window.scanpro.getOta());
+    } catch {
+      // main process busy restarting the service — next tick
+    }
+  };
+  refresh();
+  setInterval(refresh, 1000);
+}
+
+wireOtaPanel();
 
 // ---------------- init ----------------
 (async function init() {
