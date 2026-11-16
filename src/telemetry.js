@@ -12,6 +12,8 @@
 //                                  never starts and the web app's probe finds nothing. To the
 //                                  doctor that looks like "clicking Scan does nothing" — see
 //                                  ScanPro_Local_HTTP_Server.md §4 and the spec's §6.2.
+//   app.exited / app.updated       the simulated app OTA install (ScanPro_OTA_API.md §4.6), sent
+//                                  by the local service through reportServiceEvent below.
 //
 // Rules this file follows from the telemetry spec:
 //   - `app.name` is this integration's registered application name, whichever part of the app

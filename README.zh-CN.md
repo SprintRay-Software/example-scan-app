@@ -21,7 +21,8 @@ https://github.com/user-attachments/assets/80a45043-70d4-439b-bcf5-5d6698d452ce
 - **命令行运行器** —— `npm start` —— 同一套流程,输出到控制台。
 
 两个前端还都会提供 **`127.0.0.1` 上的本机 HTTP 服务** —— 除 URL scheme 之外,Web 端触达桌面扫描仪的
-第二条路径(见[本机 HTTP 服务](#本机-http-服务127001))。
+第二条路径(见[本机 HTTP 服务](#本机-http-服务127001)),其中包括对其**应用更新(OTA)**接口的模拟,带有 DS
+需要处理的每一种失败的开关(见 [OTA(更新)](#ota更新))。
 
 命令行及其核心为**零依赖**(仅 Node.js ≥ 18 内置能力);Electron 仅作为可选的 `devDependency`,只在
 运行 UI 时才需要,`electron-builder` 只在打包时才需要。
@@ -587,6 +588,8 @@ npm run app -- --env-file=.env.qa        # 也可以用 SCANPRO_ENV_FILE=.env.qa
     与**完整 response**(status、headers、body、耗时);body 会格式化并可复制,S3 PUT 的 body 显示为
     `<binary N bytes>`。
   - **Log** —— 与命令行一致的带时间戳 step/ok/fail/info 流。
+- **左侧底部 —— OTA simulator。** 本机服务实时的 `/update/status`,以及应用更新的模拟器开关:下载方式与速度、
+  重启停机时长、换端口、ScanPro 是否报告为运行中、强制失败或卡住,以及其他故障情形。见 [OTA(更新)](#ota更新)。
 
 **从浏览器拉起。** 应用会把自身注册为该 URL scheme 的系统处理器(`app.setAsDefaultProtocolClient`),
 因此在 SprintRay 网页点击 **OR Scan** 可直接拉起它 —— 深链会落入启动 URL 输入框并自动解析。右上角
@@ -673,7 +676,7 @@ Web 端触达桌面应用的**第二条路径**。不走系统 URL scheme,而是
 ```sh
 npm run serve                  # 占用端口;/start 通过 URL scheme 拉起桌面应用
 npm run serve -- --run-flow    # /start 改为在进程内换取 token 并上传扫描文件
-npm run serve -- --help        # 全部选项:端口区间、上报的版本/状态、Host 校验开关
+npm run serve -- --help        # 全部选项:端口区间、上报的版本/状态、Host 校验开关、OTA
 ```
 
 无头模式下,`/start` 会像真实的常驻服务那样拉起应用 —— 把 payload 交给该 URL scheme 的系统处理器,
@@ -815,14 +818,236 @@ curl -s -X POST http://127.0.0.1:29083/scanpro/v1/start \
 有一处行为是刻意不同的:真实服务会把 `argument` 原样交给 ScanPro,而本服务会解码它,解不开就直接返回
 `400`。这正是模拟器的价值 —— 让你在这里就发现 payload 有问题,而不是盯着一个毫无反应的扫描仪。
 
+## OTA(更新)
+
+本机服务还模拟了 `ScanPro_OTA_API.md`(v1.1)定义的**应用更新**:Web 端让服务先下载新的 ScanPro 安装包、
+再安装,两步都通过轮询跟进。在 Allied Star 交付任何构建之前,可以用它开发和测试 Scan tab 的更新流程(下载 →
+安装 → 进度 → 结果、刷新页面、端口变化、各种失败)。
+
+**只模拟 `target: "app"`。** 模拟器不实现固件更新:`target: "firmware"` 的请求按契约是合法的,但一律返回
+`400 E_UPDATE_UNSUPPORTED`(服务无法执行该更新时用的错误码)。这里永远不会出现 `updating_firmware` 阶段、
+扫描仪相关的失败码以及 `scanner.firmware_update_completed`。
+
+两个前端都提供:`npm run serve` 和桌面应用。下载**默认是模拟的** —— 不联网,进度按 64 MB/s 假装下载真实
+安装包的 2.1 GB;加 `--real-download` 才会真正流式下载 `package.url`。
+
+| | 方法 | 路径 | 返回 |
+|---|---|---|---|
+| 1 | `POST` | `/scanpro/v1/update` | 立即返回 `200 { action, target, phase, fromVersion, toVersion }` |
+| 2 | `GET` | `/scanpro/v1/update/status` | `{ action, target, phase, percent, fromVersion, toVersion, startedAt, updatedAt, error }` |
+
+请求体为 `{ action, target, package }`:
+
+```json
+{
+  "action": "download",
+  "target": "app",
+  "package": {
+    "version": "1.0.45.0",
+    "url": "https://cdn.example.com/scanos/ScanOS_1.0.45.0.exe",
+    "md5": "ddb59700ca49a13e3d2ef95756dc6ec5"
+  }
+}
+```
+
+`action` 为 `download` 或 `install`。install 请求带**与下载时相同的 `target` 和 `package`**,服务据此找到已下载的
+包。`md5` 可选,比较时不区分大小写。
+
+### 阶段
+
+```
+download   downloading ─▶ verifying ─▶ downloaded
+install    verifying ─▶ installing ─▶ restarting ─▶ (服务被替换) ─▶ completed
+           任一步都可能以 failed 结束,error = { code, message }
+```
+
+| `phase` | 步骤 | `percent` | 模拟器的行为 |
+|---|---|---|---|
+| `idle` | — | `null` | 从未执行过更新 |
+| `downloading` | 下载 | 0–100 | 流式下载 `package.url`(real)或累计假字节(simulated) |
+| `verifying` | 两者 | `null` | 下载后:按 `package.md5` 校验 MD5;安装前:重新计算文件哈希、再校验 MD5,外加模拟的 Authenticode 校验 |
+| `downloaded` | 下载 | `100` | 包已落盘并通过校验,等待 `install` |
+| `installing` | 安装 | `null` | "安装器"运行(`--install-time`,默认 4 s) |
+| `restarting` | 安装 | `null` | 先保持可见 `--restart-hold`(2.5 s,比 Scan tab 的 2 s 轮询间隔长),随后 **HTTP 服务关闭**,停机 `--restart-delay`(5 s),新服务重新起来 —— 加 `--port-switch` 时换一个端口 |
+| `completed` | 安装 | `100` | 新服务读到 `version = toVersion`,`/status` 此后报告新版本 |
+| `failed` | 两者 | 保持 | `error.code` 说明原因 |
+
+**重启之后**,新服务按 §4.5 对真实服务的要求行事:读取持久化的状态,比较已安装版本与 `toVersion`,置
+`completed` 或 `failed / E_INSTALL_FAILED`。内存中的状态不会跨越重启,只有模拟器开关会保留。
+
+**包的保留**遵循 §4.4:每个 target 只保留一个包;安装成功或校验失败后删除,其他原因的安装失败则保留,可直接再次
+调用 `install`。再次下载同一个包会立即返回 `phase: "downloaded"`。
+
+**落盘位置。** 状态和包保存在 state 目录下(`~/.sprintray-scanpro-example/ota/`;桌面应用中为 user-data 目录;
+可用 `--state-dir` 或 `$SCANPRO_STATE_DIR` 修改)。它们在模拟重启和模拟器自身重启后都还在,状态保留到下一次被接受的
+`POST /update`;被拒绝的 POST(任何 4xx)不会改动它。更新之后,`/status.version` 一直报告已安装的版本;传
+`--version` 可以从指定版本重新开始,`--ota-reset` 会清掉所有更新记录。
+
+### 关闭并重新打开页面
+
+下载和安装**在服务里运行,而不是在页面里**:没有任何人轮询时进度也在推进。页面在某一步中途关闭、再打开时,自身没有
+任何状态 —— 它探测端口区间,读一次 `GET /update/status`,就能拿到实时的 `phase`、`percent`、`toVersion` 以及
+最初的 `startedAt`。服务从 `restarting` 回来换了端口之后,以及模拟器自身重启之后,依然如此:
+
+- 已结束的步骤(`downloaded`、`completed`、`failed`)按原样报告;
+- 未完成的**下载**在新进程中继续 —— 模拟下载从保存的百分比接着走,真实下载从头开始。契约没有规定是哪一种;传
+  `--interrupted-download fail` 可以让新服务改报 `failed / E_DOWNLOAD_FAILED`,以便 Scan tab 两种情况都测到;
+- 未完成的**安装**会以 `failed / E_INSTALL_FAILED` 回来,包保留,因为磁盘上的版本没有变(§4.5)。
+
+### 错误
+
+请求级错误沿用 `/start` 的信封格式,使用契约中的错误码:
+
+| 状态码 | `code` | 何时 |
+|---|---|---|
+| `400` | `E_INVALID_ARGUMENT` | JSON 不合法;`action` / `target` 取值不对;缺少 `package`;`version` 或 `url` 缺失或为空;`url` 不是 `https://` 绝对地址;给了 `md5` 但不是 32 位十六进制 |
+| `400` | `E_SCAN_NOT_INSTALLED` | `/status` 会报 `installed: false` |
+| `400` | `E_UPDATE_UNSUPPORTED` | `target: "firmware"`(未模拟),或 `--ota-unsupported` |
+| `400` | `E_UPDATE_IN_PROGRESS` | 已有下载或安装在进行 |
+| `400` | `E_ALREADY_UP_TO_DATE` | 已安装版本 ≥ `package.version`(按段比较,缺段补 0) |
+| `400` | `E_PACKAGE_NOT_DOWNLOADED` | `install` 时没有与 `target` + `package` 匹配的已下载包 |
+| `400` | `E_SCAN_ALREADY_RUNNING` | `/status` 报 `running: true` 时 `install`;下载不受影响 |
+| `503` | `E_INACTIVE_SESSION` | `--inactive-session`:所有路径(含 `OPTIONS`),在任何 CORS 头之前 |
+| `404` | `NOT_FOUND` | `--no-update-route`:没有 OTA 接口的旧版服务 |
+
+模拟器自己会产生的 `phase = failed` 错误码:`E_DOWNLOAD_FAILED`(网络、HTTP 非 2xx、数据不完整、
+`--interrupted-download fail` 下的中途重启)、`E_INSUFFICIENT_DISK_SPACE`(真实下载大于剩余空间)、
+`E_VERIFY_FAILED`(MD5 不一致、文件在磁盘上被改动、签名不通过;包被删除)、`E_INSTALL_FAILED`(安装中途服务停止,
+或新服务报告的版本不对)。`E_USER_CANCELLED`、`E_TIMEOUT`、`E_UNKNOWN` 可以强制注入(见下文)。
+
+`POST /update` 带 JSON body,浏览器会先发预检。`/update` 的预检与 `/start` 一样能通过,包括 Private Network
+Access(见 [CORS](#cors-与-chrome-的-private-network-access))。
+
+### 用 curl 走一遍
+
+以待测版本和较短的模拟下载启动服务:
+
+```sh
+npm run serve -- --installed --version 1.0.44.9 --simulated-size 200 --download-speed 20 \
+  --restart-delay 4 --port-switch --sim-control
+```
+
+`--installed` 让 ScanPro 即使没有注册 URL scheme 处理器也报告为已安装 —— 否则 OTA 会以 `E_SCAN_NOT_INSTALLED`
+拒绝。
+
+```sh
+B=http://127.0.0.1:29083/scanpro/v1
+PKG='{"version":"1.0.45.0","url":"https://cdn.example.com/scanos/ScanOS_1.0.45.0.exe","md5":"ddb59700ca49a13e3d2ef95756dc6ec5"}'
+
+# 1. 下载 —— 立即返回
+curl -s -X POST $B/update -H 'Content-Type: application/json' \
+  -d "{\"action\":\"download\",\"target\":\"app\",\"package\":$PKG}"
+# {"action":"download","target":"app","phase":"downloading","fromVersion":"1.0.44.9","toVersion":"1.0.45.0"}
+
+# 2. 关闭页面:一段时间内什么都不发,然后由一个全新的客户端读一次状态
+sleep 4; curl -s $B/update/status
+# {"action":"download","target":"app","phase":"downloading","percent":38,...,"startedAt":"…:48.344+08:00",...}
+
+# 3. 约 10 s 后
+curl -s $B/update/status
+# {"action":"download","target":"app","phase":"downloaded","percent":100,...}
+
+#    可选:停掉模拟器(Ctrl+C)再启动,状态仍然是 "downloaded"。
+
+# 4. ScanPro "运行中"(模拟器开关)时安装 → 被拒绝
+curl -s -X POST $B/_sim -H 'Content-Type: application/json' -d '{"scanPro":{"running":true}}' >/dev/null
+curl -s -X POST $B/update -H 'Content-Type: application/json' \
+  -d "{\"action\":\"install\",\"target\":\"app\",\"package\":$PKG}"
+# {"error":{"code":"E_SCAN_ALREADY_RUNNING","message":"ScanPro is running; close it before installing"}}
+curl -s -X POST $B/_sim -H 'Content-Type: application/json' -d '{"scanPro":{"running":null}}' >/dev/null
+
+# 5. 安装
+curl -s -X POST $B/update -H 'Content-Type: application/json' \
+  -d "{\"action\":\"install\",\"target\":\"app\",\"package\":$PKG}"
+# {"action":"install","target":"app","phase":"verifying","fromVersion":"1.0.44.9","toVersion":"1.0.45.0"}
+```
+
+每秒轮询一次,端口不再响应时重新探测区间 —— Scan tab 也必须这样做:
+
+```
+t=1s   port 29083 verifying
+t=3s   port 29083 installing
+t=7s   port 29083 restarting
+t=9s   port 29083 unreachable
+t=11s  port 29083 unreachable → re-probed, found port 29084
+t=12s  port 29084 completed percent=100
+```
+
+```console
+$ curl -s http://127.0.0.1:29084/scanpro/v1/status
+{"service":"SprintRayScanService","running":false,"installed":true,"version":"1.0.45.0"}
+```
+
+### 模拟器开关
+
+**真实的 SprintRayScanService 没有这些开关。** 它们让 DS 可以按需走到契约的每一个分支。三种设置方式:
+`npm run serve` 的参数(下表)、环境文件中的 `SCANPRO_OTA_*`(见 `.env.example`),以及桌面应用开发者模式里的
+**OTA simulator** 面板 —— 面板显示实时的 `/update/status`,并可在运行时修改开关。
+
+| 参数 | 作用 |
+|---|---|
+| `--real-download` | 真正下载 `package.url`(默认:模拟) |
+| `--download-speed <MB/s>` | 模拟下载的速度,或真实下载的限速(默认 64) |
+| `--simulated-size <MB>` | 模拟下载假装的大小(默认 2150) |
+| `--install-time <s>` / `--restart-hold <s>` / `--restart-delay <s>` | `installing` 时长 / `restarting` 可见时长 / 停机时长(4 / 2.5 / 5) |
+| `--port-switch` / `--restart-port <n>` | 重启后换到下一个端口 / 换到指定端口 |
+| `--fail <spec>` | 强制失败:`[download.\|install.]<phase>:<E_CODE>[@percent]`,phase 为 `downloading` \| `verifying` \| `installing` \| `restarting` —— 如 `downloading:E_DOWNLOAD_FAILED@30`、`install.verifying:E_VERIFY_FAILED`、`installing:E_USER_CANCELLED` |
+| `--fail-once <spec>` | 同上,只生效一次,重试即成功 |
+| `--stall <spec>` | 冻结进度**和 `updatedAt`**:`[download.\|install.]<phase>[:<s>]`;不带秒数时一直卡住,直到通过 `/_sim` 或面板解除。有进度的阶段卡在 30 % |
+| `--bad-signature` | Authenticode 校验失败 → 安装的 `verifying` 阶段报 `E_VERIFY_FAILED` |
+| `--version-mismatch` | 安装器"成功",但新服务仍报告旧版本 → `E_INSTALL_FAILED` |
+| `--ota-unsupported` | 所有 `POST /update` → `E_UPDATE_UNSUPPORTED` |
+| `--no-update-route` | 旧版服务:`/update` 与 `/update/status` 返回 `404` |
+| `--inactive-session` | 所有路由返回 `503 E_INACTIVE_SESSION` |
+| `--running` / `--not-installed` / `--installed` / `--version <v>` | `/status` 中关于 ScanPro 的报告 |
+| `--interrupted-download <resume\|fail>` | 重启后的服务如何处理未完成的下载 |
+| `--allow-http-package` | 接受 `http://` 包地址,例如从本机提供的包 |
+| `--sim-control` | 挂载下文的控制路由 |
+| `--ota-reset` | 启动时清掉所有更新、包和 OTA 安装的版本 |
+
+**控制路由**默认关闭,只有 `--sim-control`(或 `SCANPRO_OTA_SIM_CONTROL=1`)才会打开 —— 一个能改变行为的
+回环路由,恰恰是真实服务不该有的东西:
+
+```sh
+curl -s $B/_sim                                                  # 开关 + OTA 快照
+curl -s -X POST $B/_sim -d '{"failOnce":"installing:E_INSTALL_FAILED","portSwitch":true}'
+curl -s -X POST $B/_sim -d '{"stall":null}'                      # 解除卡住
+curl -s -X POST $B/_sim/reset                                    # 无更新、无包、回到配置的版本
+```
+
+请求体的键与开关相同(`downloadMode`、`downloadBytesPerSec`、`fail`、`failOnce`、`stall`、`portSwitch`、
+`restartPort`、`restartDelayMs`、`signatureInvalid`、`versionMismatch`、`unsupported`、`noUpdateRoute`、
+`inactiveSession`、`scanPro: { installed, running }` 等)。未知的键返回 `400`,而不是悄悄忽略。
+`inactiveSession` 打开时该路由仍可用,以便再把它关掉。
+
+在桌面应用里,窗口本身扮演 ScanPro,所以 `/status` 报 `running: true`,安装会得到 `E_SCAN_ALREADY_RUNNING`,
+直到把面板里的 **ScanPro running** 设为 **no** —— 这正是 Scan tab 要处理的"请先关闭 ScanOS 再安装"。
+
+### 超出契约的部分
+
+- **不模拟固件。** `target: "firmware"` → `E_UPDATE_UNSUPPORTED`。
+- **模拟下载无法校验 `package.md5`。** 没有真实字节,所以除非强制 `download.verifying:E_VERIFY_FAILED`,否则
+  总是通过。需要真实的 MD5 校验时,用 `--real-download` 对一个真实文件下载。安装时仍会对磁盘上留下的占位文件
+  重新计算哈希,下载与安装之间被改动会被发现。
+- **Authenticode 校验是一个开关**(`--bad-signature`),并不真正校验签名。
+- **`restarting` 会先保持可见** 2.5 s 再关闭服务,让 2 s 一次的轮询能看到它。真实服务可能从未报告这个阶段就
+  停掉了 —— Scan tab 两种情况都要能处理。
+- **中断的下载默认会继续**(由 `--interrupted-download` 选择)。
+- **`app.exited { reason: "update" }`** 在*服务*因替换而停止时发送;安装期间 ScanPro 本身不会在运行
+  (那是 `E_SCAN_ALREADY_RUNNING`)。
+- **`http://` 包地址**按契约拒绝,除非加 `--allow-http-package`。
+- **开关与 `/_sim`** 只存在于本模拟器。
+
 ## 遥测
 
-有两个事件会发往 SprintRay 的遥测接口:
+以下事件会发往 SprintRay 的遥测接口:
 
 | `eventName` | 何时上报 | `eventData` |
 |---|---|---|
 | `scanner.connected` | 每次应用被带着病例拉起时 —— 拉起那一刻打时间戳,换取 token 之后发送 | `{ connection, firmwareVersion }` |
 | `local_server.port_unavailable` | 端口区间被占满,本机服务未能启动(见[上文](#端口区间被占满时)) | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
+| `app.exited` | 模拟的 [OTA](#ota更新) 安装中,服务停止以便被替换 | `{ reason: "update", uptimeSec }` |
+| `app.updated` | 模拟安装结束:成功时在新服务首次启动时发送,失败时在安装步骤失败时发送 | `{ fromVersion, toVersion, durationMs, result, errorCode?, trigger: "sprintray" }` |
 
 **不需要任何额外配置。** 遥测接口就是**同一个 API 网关上的一个路径**,和换取 token、上传走同一把
 **`SCANPRO_API_KEY`**,所以地址直接由本应用已经指向的那个 origin 推导出来:

@@ -26,7 +26,8 @@ It ships two front ends over **one shared, fully-instrumented flow** (`src/core/
 
 Both front ends also serve the **local HTTP service on `127.0.0.1`** — the second way the web app
 can reach a desktop scanner, alongside the URL scheme (see
-[Local HTTP service](#local-http-service-127001)).
+[Local HTTP service](#local-http-service-127001)) — including a simulation of its **app update
+(OTA)** routes, with switches for every failure DS has to handle (see [OTA (update)](#ota-update)).
 
 The CLI and its core are **zero-dependency** (Node.js ≥ 18 built-ins only). Electron is an optional
 `devDependency`, pulled in only for the UI; `electron-builder` only for packaging.
@@ -634,6 +635,10 @@ three parts:
     URL, headers, body) and the **complete response** (status, headers, body, duration). Bodies are
     pretty-printed and copyable; the S3 PUT body is shown as `<binary N bytes>`.
   - **Log** — the same timestamped step/ok/fail/info stream the CLI prints.
+- **Left, at the bottom — OTA simulator.** The live `/update/status` of the local service and the
+  simulator-only switches of the app update: download mode and speed, restart delay, port switch,
+  whether ScanPro reports itself running, a forced failure or stall, and the other fault cases.
+  See [OTA (update)](#ota-update).
 
 **Launch from the browser.** The app registers itself as the OS handler for the URL scheme
 (`app.setAsDefaultProtocolClient`), so clicking **OR Scan** in the SprintRay web app can open it
@@ -732,7 +737,7 @@ took (hover for the endpoints). To run it on its own, without Electron:
 ```sh
 npm run serve                  # bind a port; /start launches the desktop app via the URL scheme
 npm run serve -- --run-flow    # /start instead exchanges the code and uploads a scan in-process
-npm run serve -- --help        # all options: port range, reported version/state, host check
+npm run serve -- --help        # all options: port range, reported version/state, host check, OTA
 ```
 
 Run headlessly, `/start` launches the app the way the real resident service does — by handing the
@@ -888,14 +893,260 @@ One deliberate difference in behaviour: a real service hands `argument` to ScanP
 this one decodes it and answers `400` when it is not base64 JSON. That is the point of a simulator —
 you find out here that the payload is malformed, instead of watching a scanner sit idle.
 
+## OTA (update)
+
+The local service also simulates the **app update** of `ScanPro_OTA_API.md` (v1.1): the web app
+tells the service to download a new ScanPro installer, then to install it, and follows both steps by
+polling. Use it to build and test the Scan tab's update flow (download → install → progress →
+result, page reload, port change, failures) before any Allied Star build exists.
+
+**Only `target: "app"` is simulated.** The simulator does not implement firmware updates: a request
+with `target: "firmware"` is valid per the contract, but always answers
+`400 E_UPDATE_UNSUPPORTED`, the code a service gives when it cannot do the update. The
+`updating_firmware` phase, the scanner failure codes and `scanner.firmware_update_completed` never
+occur here.
+
+Both front ends serve it: `npm run serve` and the desktop app. The download is **simulated by
+default**: no network, with progress that pretends to fetch the real installer's 2.1 GB at
+64 MB/s. Add `--real-download` to actually stream `package.url`.
+
+| | Method | Path | Answers |
+|---|---|---|---|
+| 1 | `POST` | `/scanpro/v1/update` | at once: `200 { action, target, phase, fromVersion, toVersion }` |
+| 2 | `GET` | `/scanpro/v1/update/status` | `{ action, target, phase, percent, fromVersion, toVersion, startedAt, updatedAt, error }` |
+
+The request body is `{ action, target, package }`:
+
+```json
+{
+  "action": "download",
+  "target": "app",
+  "package": {
+    "version": "1.0.45.0",
+    "url": "https://cdn.example.com/scanos/ScanOS_1.0.45.0.exe",
+    "md5": "ddb59700ca49a13e3d2ef95756dc6ec5"
+  }
+}
+```
+
+`action` is `download` or `install`. The install call sends **the same `target` and `package`**
+as the download. That is how the service finds the package it downloaded. `md5` is optional, and
+compared case-insensitively.
+
+### Phases
+
+```
+download   downloading ─▶ verifying ─▶ downloaded
+install    verifying ─▶ installing ─▶ restarting ─▶ (service replaced) ─▶ completed
+           any step can end in failed, with error = { code, message }
+```
+
+| `phase` | Step | `percent` | What the simulator does |
+|---|---|---|---|
+| `idle` | — | `null` | no update has ever run |
+| `downloading` | download | 0–100 | streams `package.url` (real) or counts fake bytes (simulated) |
+| `verifying` | both | `null` | after the download: MD5 against `package.md5`. Before the install: the file is re-hashed, MD5 checked again, plus the simulated Authenticode check |
+| `downloaded` | download | `100` | package on disk and verified, waiting for `install` |
+| `installing` | install | `null` | the "installer" runs (`--install-time`, default 4 s) |
+| `restarting` | install | `null` | visible for `--restart-hold` (2.5 s, longer than the Scan tab's 2 s poll); then **the HTTP server closes**, stays down for `--restart-delay` (5 s), and a new service comes back, on another port with `--port-switch` |
+| `completed` | install | `100` | the new service found `version = toVersion`; `/status` now reports it |
+| `failed` | both | kept | `error.code` says why |
+
+**After the restart** the new service does what §4.5 asks of the real one. It reads the persisted
+state, compares the installed version with `toVersion`, and sets `completed` or
+`failed / E_INSTALL_FAILED`. Nothing carries over in memory; only the simulator switches outlive
+the restart.
+
+**Package retention** follows §4.4. There is one package per target, deleted after a successful
+install or a verify failure, and kept after any other install failure, so `install` can simply be
+called again. Downloading the same package again answers `phase: "downloaded"` at once.
+
+**On disk.** The status and the package live under the state dir
+(`~/.sprintray-scanpro-example/ota/`; the user-data dir in the desktop app; `--state-dir` or
+`$SCANPRO_STATE_DIR` to move it). They survive the simulated restart and a restart of the
+simulator itself, and the status stays until the next accepted `POST /update`. A refused POST
+(any 4xx) leaves it alone. After an update, `/status.version` reports the installed version from
+then on. Pass `--version` to start from a given version again, or `--ota-reset` to forget every
+update.
+
+### Closing and reopening the page
+
+The download and the install run **in the service, not in the page**. Progress advances with nobody
+polling. A page that closes mid-step and opens again has no state of its own. It probes the port
+range, reads `GET /update/status` once, and gets the live `phase`, `percent` and `toVersion` with
+the original `startedAt`. That still works after the service has come back from `restarting` on
+another port, and after the simulator itself was restarted:
+
+- a finished step (`downloaded`, `completed`, `failed`) is reported as it was;
+- an unfinished **download** carries on in the new process. The simulated one continues from the
+  saved percent; a real one starts over. The contract does not say which; pass
+  `--interrupted-download fail` to make the new service report `failed / E_DOWNLOAD_FAILED`
+  instead, so the Scan tab can be tested against both;
+- an unfinished **install** comes back `failed / E_INSTALL_FAILED` with the package kept, because
+  the version on disk did not change (§4.5).
+
+### Errors
+
+Request errors use the same envelope as `/start`, with the contract's codes:
+
+| Status | `code` | When |
+|---|---|---|
+| `400` | `E_INVALID_ARGUMENT` | bad JSON; `action` / `target` not one of the values; `package` missing; `version` or `url` missing or empty; `url` not an absolute `https://` URL; `md5` given but not 32 hex characters |
+| `400` | `E_SCAN_NOT_INSTALLED` | `/status` would say `installed: false` |
+| `400` | `E_UPDATE_UNSUPPORTED` | `target: "firmware"` (not simulated), or `--ota-unsupported` |
+| `400` | `E_UPDATE_IN_PROGRESS` | a download or install is already running |
+| `400` | `E_ALREADY_UP_TO_DATE` | installed version ≥ `package.version` (segment-wise, missing segments are 0) |
+| `400` | `E_PACKAGE_NOT_DOWNLOADED` | `install` with no downloaded package matching `target` + `package` |
+| `400` | `E_SCAN_ALREADY_RUNNING` | `install` while `/status` says `running: true`. Downloading still works |
+| `503` | `E_INACTIVE_SESSION` | `--inactive-session`: every path, `OPTIONS` included, before any CORS header |
+| `404` | `NOT_FOUND` | `--no-update-route`: an older service without the OTA routes |
+
+`phase = failed` codes the simulator produces on its own: `E_DOWNLOAD_FAILED` (network, HTTP
+non-2xx, short read, service restarted mid-download with `--interrupted-download fail`),
+`E_INSUFFICIENT_DISK_SPACE` (real download larger than the free space), `E_VERIFY_FAILED` (MD5
+mismatch, file changed on disk, bad signature; the package is deleted), `E_INSTALL_FAILED`
+(service stopped mid-install, or the new service reports another version). `E_USER_CANCELLED`,
+`E_TIMEOUT` and `E_UNKNOWN` can be forced (see below).
+
+`POST /update` carries a JSON body, so the browser preflights it. The preflight passes for
+`/update` exactly as for `/start`, Private Network Access included (see
+[CORS](#cors-and-chromes-private-network-access)).
+
+### Walkthrough with curl
+
+Start the service with a version under test and a short simulated download:
+
+```sh
+npm run serve -- --installed --version 1.0.44.9 --simulated-size 200 --download-speed 20 \
+  --restart-delay 4 --port-switch --sim-control
+```
+
+`--installed` reports ScanPro as installed even when no URL-scheme handler is registered. OTA
+refuses with `E_SCAN_NOT_INSTALLED` otherwise.
+
+```sh
+B=http://127.0.0.1:29083/scanpro/v1
+PKG='{"version":"1.0.45.0","url":"https://cdn.example.com/scanos/ScanOS_1.0.45.0.exe","md5":"ddb59700ca49a13e3d2ef95756dc6ec5"}'
+
+# 1. download — answers at once
+curl -s -X POST $B/update -H 'Content-Type: application/json' \
+  -d "{\"action\":\"download\",\"target\":\"app\",\"package\":$PKG}"
+# {"action":"download","target":"app","phase":"downloading","fromVersion":"1.0.44.9","toVersion":"1.0.45.0"}
+
+# 2. close the page: send nothing for a while. Then a fresh client reads the status once:
+sleep 4; curl -s $B/update/status
+# {"action":"download","target":"app","phase":"downloading","percent":38,...,"startedAt":"…:48.344+08:00",...}
+
+# 3. ~10 s later
+curl -s $B/update/status
+# {"action":"download","target":"app","phase":"downloaded","percent":100,...}
+
+#    Optional: stop the simulator (Ctrl+C) and start it again. The status is still "downloaded".
+
+# 4. install while ScanPro "runs" (simulator switch) → refused
+curl -s -X POST $B/_sim -H 'Content-Type: application/json' -d '{"scanPro":{"running":true}}' >/dev/null
+curl -s -X POST $B/update -H 'Content-Type: application/json' \
+  -d "{\"action\":\"install\",\"target\":\"app\",\"package\":$PKG}"
+# {"error":{"code":"E_SCAN_ALREADY_RUNNING","message":"ScanPro is running; close it before installing"}}
+curl -s -X POST $B/_sim -H 'Content-Type: application/json' -d '{"scanPro":{"running":null}}' >/dev/null
+
+# 5. install
+curl -s -X POST $B/update -H 'Content-Type: application/json' \
+  -d "{\"action\":\"install\",\"target\":\"app\",\"package\":$PKG}"
+# {"action":"install","target":"app","phase":"verifying","fromVersion":"1.0.44.9","toVersion":"1.0.45.0"}
+```
+
+Polling it every second, re-probing the range whenever the port stops answering, as the Scan tab
+must:
+
+```
+t=1s   port 29083 verifying
+t=3s   port 29083 installing
+t=7s   port 29083 restarting
+t=9s   port 29083 unreachable
+t=11s  port 29083 unreachable → re-probed, found port 29084
+t=12s  port 29084 completed percent=100
+```
+
+```console
+$ curl -s http://127.0.0.1:29084/scanpro/v1/status
+{"service":"SprintRayScanService","running":false,"installed":true,"version":"1.0.45.0"}
+```
+
+### Simulator switches
+
+**None of these exist on a real SprintRayScanService.** They let DS drive every branch of the
+contract on demand. Set them three ways: `npm run serve` flags (below), `SCANPRO_OTA_*` in the env
+file (see `.env.example`), or the **OTA simulator** panel in the desktop app's developer skin. The
+panel shows the live `/update/status` and changes the switches at runtime.
+
+| Flag | Effect |
+|---|---|
+| `--real-download` | really download `package.url` (default: simulated) |
+| `--download-speed <MB/s>` | simulated speed, or a throttle on the real download (default 64) |
+| `--simulated-size <MB>` | size the simulated download pretends to fetch (default 2150) |
+| `--install-time <s>` / `--restart-hold <s>` / `--restart-delay <s>` | length of `installing` / visible `restarting` / downtime (4 / 2.5 / 5) |
+| `--port-switch` / `--restart-port <n>` | come back from the restart on the next port up / on this port |
+| `--fail <spec>` | force a failure: `[download.\|install.]<phase>:<E_CODE>[@percent]`, phase `downloading` \| `verifying` \| `installing` \| `restarting` — e.g. `downloading:E_DOWNLOAD_FAILED@30`, `install.verifying:E_VERIFY_FAILED`, `installing:E_USER_CANCELLED` |
+| `--fail-once <spec>` | the same, only the first time, so the retry succeeds |
+| `--stall <spec>` | freeze progress **and `updatedAt`**: `[download.\|install.]<phase>[:<s>]`. Without seconds it stalls until cleared through `/_sim` or the panel. Progress phases stall at 30 % |
+| `--bad-signature` | the Authenticode check fails → `E_VERIFY_FAILED` at the install's `verifying` |
+| `--version-mismatch` | the installer "succeeds" but the new service reports the old version → `E_INSTALL_FAILED` |
+| `--ota-unsupported` | every `POST /update` → `E_UPDATE_UNSUPPORTED` |
+| `--no-update-route` | an older service: `/update` and `/update/status` answer `404` |
+| `--inactive-session` | every route answers `503 E_INACTIVE_SESSION` |
+| `--running` / `--not-installed` / `--installed` / `--version <v>` | what `/status` reports about ScanPro |
+| `--interrupted-download <resume\|fail>` | what a restarted service does with an unfinished download |
+| `--allow-http-package` | accept `http://` package URLs, e.g. a package served from your machine |
+| `--sim-control` | mount the control route below |
+| `--ota-reset` | forget every update, package and OTA-installed version at startup |
+
+The **control route** is off unless `--sim-control` (or `SCANPRO_OTA_SIM_CONTROL=1`) turns it on,
+because a loopback route that changes behaviour is exactly what a real service must not have:
+
+```sh
+curl -s $B/_sim                                                  # switches + OTA snapshot
+curl -s -X POST $B/_sim -d '{"failOnce":"installing:E_INSTALL_FAILED","portSwitch":true}'
+curl -s -X POST $B/_sim -d '{"stall":null}'                      # release a stall
+curl -s -X POST $B/_sim/reset                                    # no update, no package, configured version
+```
+
+The body takes the same keys as the switches (`downloadMode`, `downloadBytesPerSec`, `fail`,
+`failOnce`, `stall`, `portSwitch`, `restartPort`, `restartDelayMs`, `signatureInvalid`,
+`versionMismatch`, `unsupported`, `noUpdateRoute`, `inactiveSession`, `scanPro: { installed,
+running }`, …). An unknown key is a `400`, not a silent no-op. The route still works while
+`inactiveSession` is on, so you can switch it off again.
+
+In the desktop app the window itself plays ScanPro, so `/status` reports `running: true`, and an
+install gets `E_SCAN_ALREADY_RUNNING` until the panel's **ScanPro running** is set to **no**.
+That is the same "close ScanOS to install" path the Scan tab has to handle.
+
+### Where this goes beyond the contract
+
+- **Firmware is not simulated.** `target: "firmware"` → `E_UPDATE_UNSUPPORTED`.
+- **The simulated download cannot check `package.md5`.** There are no real bytes, so it passes
+  unless you force `download.verifying:E_VERIFY_FAILED`. Use `--real-download` against a real file
+  for a genuine MD5 check. Install still re-hashes the placeholder it left on disk, so tampering
+  with it between download and install is caught.
+- **The Authenticode check is a switch** (`--bad-signature`), not a signature check.
+- **`restarting` is held visible** for 2.5 s before the server goes down, so a 2 s poller sees it.
+  A real service may go down without ever reporting it; the Scan tab must cope with both.
+- **An interrupted download resumes** by default (`--interrupted-download` picks).
+- **`app.exited { reason: "update" }`** is sent when the *service* goes down for the replacement.
+  ScanPro itself is never running during an install (that is `E_SCAN_ALREADY_RUNNING`).
+- **`http://` package URLs** are refused like the contract says, unless `--allow-http-package`.
+- **The switches and `/_sim`** exist only here.
+
 ## Telemetry
 
-Two events go to SprintRay's telemetry endpoint:
+These events go to SprintRay's telemetry endpoint:
 
 | `eventName` | When | `eventData` |
 |---|---|---|
 | `scanner.connected` | every time the app is launched with a case — stamped at the launch, sent once the code has been exchanged | `{ connection, firmwareVersion }` |
 | `local_server.port_unavailable` | the whole port range is taken, so the local service never starts (see [above](#when-every-port-is-taken)) | `{ portRangeStart, portRangeEnd, attempted, lastErrorCode }` |
+| `app.exited` | the service goes down to be replaced by a simulated [OTA](#ota-update) install | `{ reason: "update", uptimeSec }` |
+| `app.updated` | a simulated install ends: success when the new service first starts, failure when the install step fails | `{ fromVersion, toVersion, durationMs, result, errorCode?, trigger: "sprintray" }` |
 
 **There is nothing to configure.** The endpoint is a **path on the same API gateway** as the token
 exchange and the uploads, behind the **same `SCANPRO_API_KEY`**, so it is derived from the origin
